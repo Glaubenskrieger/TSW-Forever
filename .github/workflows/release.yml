@@ -50,7 +50,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            flatpak flatpak-builder ostree elfutils rsync desktop-file-utils appstream \
+            flatpak flatpak-builder ostree elfutils librsvg2-common rsync desktop-file-utils appstream \
             python3 libarchive-tools libfontconfig1-dev libfreetype6-dev libxkbcommon-dev \
             libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
             libxcursor-dev libxi-dev
