@@ -1,0 +1,224 @@
+# A version tag pushed by the project owner starts this workflow. GitHub's tag
+# filter is a glob, so the first step enforces the exact numeric version syntax.
+name: Linux release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FREEDESKTOP_VERSION: '25.08'
+  RUST_VERSION: '1.99.0'
+
+jobs:
+  build:
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify tag, checkout, and application version
+        id: version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo 'Tag must be vMAJOR.MINOR.PATCH without a suffix' >&2; exit 1; }
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "${GITHUB_REF}^{commit}")" || { echo 'Checkout does not match the tag' >&2; exit 1; }
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "${GITHUB_SHA}^{commit}")" || { echo 'Checkout does not match the push event' >&2; exit 1; }
+          python3 -I scripts/version.py check
+          version="$(python3 -I scripts/version.py show)"
+          test "$TAG_NAME" = "v$version" || { echo 'Tag and project versions differ' >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            flatpak flatpak-builder ostree rsync desktop-file-utils appstream \
+            python3 libarchive-tools libfontconfig1-dev libfreetype6-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
+            libxcursor-dev libxi-dev
+
+      - name: Allow bubblewrap user namespaces on this runner
+        run: |
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Install pinned Flatpak runtime, SDK, and Rust extension
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub \
+            "org.freedesktop.Platform//${FREEDESKTOP_VERSION}" \
+            "org.freedesktop.Sdk//${FREEDESKTOP_VERSION}" \
+            "org.freedesktop.Sdk.Extension.rust-stable//${FREEDESKTOP_VERSION}"
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+          rustup component add rustfmt clippy --toolchain "$RUST_VERSION"
+          rustup default "$RUST_VERSION"
+
+      - name: Fetch locked Rust dependencies
+        run: scripts/build_flatpak.sh fetch --allow-network
+
+      - name: Rustfmt, Clippy, tests, licences, and package checks
+        run: |
+          set -euo pipefail
+          for crate in patcher launcher launcher-gui; do
+            cargo "+${RUST_VERSION}" fmt --check --manifest-path "$crate/Cargo.toml"
+            cargo "+${RUST_VERSION}" clippy --offline --locked --manifest-path "$crate/Cargo.toml" --all-targets -- -D warnings
+          done
+          scripts/build_flatpak.sh test
+
+      - name: Free test build outputs before the Flatpak build
+        run: |
+          rm -rf patcher/target launcher/target launcher-gui/target
+
+      - name: Vendor locked dependencies and build the Flatpak offline
+        run: |
+          scripts/build_flatpak.sh vendor --allow-network
+          scripts/build_flatpak.sh build
+          scripts/build_flatpak.sh bundle
+          ostree fsck --repo=build/flatpak/repo
+
+      - name: Assemble and audit the three release assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp build/flatpak/tsw-launcher.flatpak "dist/tsw-forever-${VERSION}.flatpak"
+          git archive --format=tar --prefix="tsw-forever-${VERSION}/" HEAD | gzip -9n > "dist/tsw-forever-${VERSION}-src.tar.gz"
+          python3 - <<'PY'
+          import os, pathlib, re, tarfile
+          version = os.environ['VERSION']
+          path = pathlib.Path(f'dist/tsw-forever-{version}-src.tar.gz')
+          required = {f'tsw-forever-{version}/{name}' for name in (
+              'README.md', 'CHANGELOG.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md',
+              'LICENSES/inventory.json', 'launcher/Cargo.toml', 'launcher/Cargo.lock',
+              'launcher-gui/Cargo.toml', 'launcher-gui/Cargo.lock', 'launcher-gui/build.rs',
+              'patcher/Cargo.toml', 'patcher/Cargo.lock', 'packaging/project.conf',
+              'packaging/flatpak/org.tswlauncher.Launcher.json',
+              'scripts/build_flatpak.sh', 'scripts/check_licenses.py', 'scripts/version.py')}
+          names = set()
+          with tarfile.open(path, 'r:gz') as archive:
+              for member in archive:
+                  name = member.name
+                  parts = pathlib.PurePosixPath(name).parts
+                  if (name.startswith('/') or '..' in parts or member.issym() or member.islnk()
+                      or any(part in {'.git', '.claude', '.codex', 'documentation', 'reports', 'release', 'build', 'target', 'AGENTS.md', 'CLAUDE.md'} for part in parts)
+                      or pathlib.PurePosixPath(name).suffix.lower() in {'.exe', '.dll', '.cab', '.msi', '.pem', '.key', '.pfx'}):
+                      raise SystemExit(f'Unsafe source archive entry: {name}')
+                  names.add(name)
+                  if member.isfile():
+                      if member.size > 25 * 1024 * 1024:
+                          raise SystemExit(f'Oversized source archive file: {name}')
+                      data = archive.extractfile(member).read()
+                      if (data.startswith((b'MZ', b'\x7fELF')) or b'TSW-Forever-' + b'Dev' in data or b'/home/' + b'shu' in data
+                          or re.search(rb'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{30,}|AKIA[A-Z0-9]{16}', data)):
+                          raise SystemExit(f'Unsafe source archive content: {name}')
+          missing = required - names
+          if missing:
+              raise SystemExit(f'Missing source archive files: {sorted(missing)}')
+          PY
+          flatpak install --user --noninteractive "dist/tsw-forever-${VERSION}.flatpak"
+          flatpak info --user "org.tswlauncher.Launcher//local"
+          reported="$(flatpak run --user --command=tsw-launch org.tswlauncher.Launcher//local --version)"
+          [[ "$reported" == "tsw-launch ${VERSION} "* ]] || { echo "Installed launcher reports unexpected version: $reported" >&2; exit 1; }
+          python3 -I scripts/check_licenses.py "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/local/active/files/share/licenses/tsw-forever"
+          (cd dist && sha256sum "tsw-forever-${VERSION}.flatpak" "tsw-forever-${VERSION}-src.tar.gz" > SHA256SUMS && sha256sum --check SHA256SUMS)
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 3
+
+      - name: Transfer verified assets to the publishing job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-set
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out the tagged changelog without storing credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Download the verified assets and refuse an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "${GITHUB_SHA}^{commit}")" || { echo 'Tag changed after the build' >&2; exit 1; }
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to replace it or its assets' >&2
+            exit 1
+          fi
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name release-set --dir dist
+          version="${TAG_NAME#v}"
+          (cd dist && sha256sum --check SHA256SUMS)
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 3
+          test -s "dist/tsw-forever-${version}.flatpak"
+          test -s "dist/tsw-forever-${version}-src.tar.gz"
+          test -s dist/SHA256SUMS
+
+      - name: Extract release notes from the matching changelog entry
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+          version = os.environ['TAG_NAME'][1:]
+          text = pathlib.Path('CHANGELOG.md').read_text(encoding='utf-8')
+          pattern = re.compile(r'^## \[' + re.escape(version) + r'\][^\n]*\n(.*?)(?=^## \[|\Z)', re.M | re.S)
+          match = pattern.search(text)
+          if not match or not match.group(1).strip():
+              raise SystemExit(f'No changelog entry for {version}')
+          pathlib.Path('release-notes.md').write_text(f'# TSW-Forever {version}\n\n' + match.group(1).strip() + '\n', encoding='utf-8')
+          PY
+
+      - name: Upload to a new draft, verify remote assets, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG_NAME#v}"
+          gh release create "$TAG_NAME" --draft \
+            --verify-tag --title "TSW-Forever ${version}" --notes-file release-notes.md
+          gh release upload "$TAG_NAME" \
+            "dist/tsw-forever-${version}.flatpak" \
+            "dist/tsw-forever-${version}-src.tar.gz" \
+            dist/SHA256SUMS
+          mkdir -p downloaded
+          gh release download "$TAG_NAME" --dir downloaded
+          cmp dist/SHA256SUMS downloaded/SHA256SUMS
+          (cd downloaded && sha256sum --check SHA256SUMS)
+          test "$(find downloaded -maxdepth 1 -type f | wc -l)" -eq 3
+          gh release edit "$TAG_NAME" --draft=false
