@@ -50,7 +50,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            flatpak flatpak-builder ostree rsync desktop-file-utils appstream \
+            flatpak flatpak-builder ostree elfutils rsync desktop-file-utils appstream \
             python3 libarchive-tools libfontconfig1-dev libfreetype6-dev libxkbcommon-dev \
             libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
             libxcursor-dev libxi-dev
@@ -93,6 +93,8 @@ jobs:
 
       - name: Vendor locked dependencies and build the Flatpak offline
         run: |
+          command -v eu-strip
+          command -v eu-elfcompress
           scripts/build_flatpak.sh vendor --allow-network
           scripts/build_flatpak.sh build
           scripts/build_flatpak.sh bundle
