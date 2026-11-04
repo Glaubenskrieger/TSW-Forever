@@ -1,0 +1,6 @@
+# Locally generated outputs; the public source export contains source only.
+**/build/
+/release/
+**/target/
+**/__pycache__/
+*.pyc

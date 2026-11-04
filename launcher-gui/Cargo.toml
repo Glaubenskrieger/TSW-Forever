@@ -1,0 +1,25 @@
+[package]
+name = "tsw-launcher-gui"
+version = "0.2.0"
+edition = "2021"
+description = "Graphical launcher for the original The Secret World client (front end of tsw-launch)"
+publish = false
+# Note: Slint is licensed GPL-3.0-only OR royalty-free desktop license OR commercial. See LICENSES/README.md.
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "tsw-launcher"
+path = "src/main.rs"
+
+[dependencies]
+tsw-launch = { path = "../launcher" }
+# the file dialog goes through the desktop portal; both crates are already part of the dependency tree (the winit backend uses them)
+zbus = { version = "5", default-features = false, features = ["async-io"] }
+futures-lite = { version = "2", default-features = false }
+slint = { version = "1", default-features = false, features = ["std", "compat-1-2", "backend-winit-wayland", "backend-winit-x11", "renderer-software"] }
+
+[build-dependencies]
+slint-build = "1"
+
+[profile.release]
+opt-level = 2

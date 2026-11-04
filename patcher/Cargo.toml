@@ -1,0 +1,10 @@
+[package]
+name = "tsw-patch"
+version = "0.1.0"
+edition = "2021"
+description = "Signed, versioned client patch system for TSW-Forever (manifest verification, delta/replace patching, rollback)"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+minisign-verify = "=0.2.4"

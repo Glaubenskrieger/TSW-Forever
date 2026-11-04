@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.tswlauncher.Launcher</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>The Secret World – Forever</name>
+  <summary>TSW-Forever launcher for the original The Secret World client</summary>
+  <description>
+    <p>A native launcher that starts the original The Secret World (2012) client through Wine or Proton, with optional FSR upscaling through gamescope and a guided installation.</p>
+    <p>The launcher contains no game data. The original installer is downloaded only after your explicit consent and only if its checksum is known; you can also use an installer you obtained yourself or an existing installation.</p>
+  </description>
+  <url type="homepage">https://github.com/Glaubenskrieger/TSW-Forever</url>
+  <url type="bugtracker">https://github.com/Glaubenskrieger/TSW-Forever/issues</url>
+  <developer id="io.github.glaubenskrieger">
+    <name>TSW-Forever</name>
+  </developer>
+  <launchable type="desktop-id">org.tswlauncher.Launcher.desktop</launchable>
+  <provides>
+    <binary>tsw-launcher</binary>
+  </provides>
+  <categories>
+    <category>Game</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.2.0" date="2026-11-04" type="stable" />
+  </releases>
+</component>

@@ -1,0 +1,10 @@
+# Used by the Flatpak build only (copied to <stage>/.cargo/config.toml by scripts/build_flatpak.sh): all crates come from the
+# vendor directory that was created from the committed Cargo.lock, so the build itself needs no network.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
+
+[net]
+offline = true

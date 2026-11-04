@@ -1,0 +1,849 @@
+import { ScrollView, LineEdit, ComboBox } from "std-widgets.slint";
+
+// level: 0 ok, 1 hint, 2 problem
+export struct StatusRow { level: int, text: string, hint: string }
+
+// ---- palette and type scale ------------------------------------------------------------------------------------
+// Colours of the current theme. The values are set from src/theme.rs (the only place that defines them); the defaults below
+// are the original Templar palette, so the window looks the same if nothing is set. `red*` are the theme's accent colours.
+export global Theme {
+    in-out property <color> ink: #07070a;
+    in-out property <color> card: #0f0b0c;
+    in-out property <color> card-line: #2b1618;
+    in-out property <color> text: #ece4d9;
+    in-out property <color> dim: #b0a699;       // secondary text (readable on the dark cards)
+    in-out property <color> faint: #7a7068;     // placeholders, disabled
+    in-out property <color> red: #9b1c22;
+    in-out property <color> red-hot: #cf2a32;
+    in-out property <color> red-deep: #5c0d12;
+    in-out property <color> ok: #5aa069;
+    in-out property <color> warn: #d1a43a;
+    in-out property <color> bad: #e0555b;
+    in-out property <color> bg-start: #060608;
+    in-out property <color> bg-mid: #0f0709;
+    in-out property <color> bg-end: #1d0a0d;
+    in-out property <color> glow: #6a121955;
+    in-out property <color> hover-hi: #b3222a;
+    in-out property <color> hover-lo: #701018;
+    in-out property <color> hover-border: #e8454c;
+    in-out property <color> btn-border: #5a2a2d;
+    in-out property <color> btn-hover: #2a1316;
+    in-out property <color> btn-base: #140e10;
+    in-out property <color> btn-primary: #3a1013;
+    in-out property <color> frame: #3a1b1e;
+    in-out property <color> shadow: #c8282f55;
+    in-out property <color> focus-ring: #e8a2a6;
+    out property <string> serif: "Noto Serif";
+    out property <length> fs-title: 40px;
+    out property <length> fs-heading: 20px;
+    out property <length> fs-body: 14px;
+    out property <length> fs-small: 12px;
+    out property <length> fs-caption: 11px;
+    out property <length> gap: 14px;          // base spacing unit for panels
+}
+
+// keyboard focus ring shared by all custom controls
+component FocusRing inherits Rectangle {
+    in property <bool> active;
+    border-width: root.active ? 2px : 0px;
+    border-color: Theme.focus-ring;
+    border-radius: 4px;
+}
+
+// ---- the big call to action --------------------------------------------------------------------------------------
+component PlayButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback clicked();
+    // a long label ("INSTALLATION FORTSETZEN") gets a wider button and smaller lettering instead of overflowing
+    width: root.label.character-count > 12 ? 480px : 340px;
+    height: 68px;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: root.enabled ? (ta.has-hover ? Theme.hover-border : Theme.red-hot) : Theme.faint;
+    background: root.enabled
+        ? @linear-gradient(180deg, ta.has-hover ? Theme.hover-hi : Theme.red 0%, ta.has-hover ? Theme.hover-lo : Theme.red-deep 100%)
+        : @linear-gradient(180deg, #1c1a19 0%, #121110 100%);
+    animate background { duration: 160ms; }
+    animate border-color { duration: 160ms; }
+    drop-shadow-blur: root.enabled ? 28px : 0px;
+    drop-shadow-color: Theme.shadow;
+    Text {
+        text: root.label;
+        color: root.enabled ? #fbf3ea : Theme.faint;
+        font-family: Theme.serif;
+        font-size: root.label.character-count > 12 ? 19px : 26px;
+        font-weight: 700;
+        letter-spacing: root.label.character-count > 12 ? 5px : 9px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+    // Keyboard focus only (Tab). A scope that takes the focus on click would swallow the first press above the TouchArea.
+    fs := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if (e.text == " " || e.text == "\n") { root.clicked(); return accept; }
+            reject
+        }
+    }
+    FocusRing { active: fs.has-focus; x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; }
+}
+
+// ---- quiet checkbox ------------------------------------------------------------------------------------------------
+component QuietCheck inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    in-out property <bool> checked;
+    callback toggled();
+    height: 30px;
+    HorizontalLayout {
+        spacing: 12px;
+        alignment: center;
+        Rectangle {
+            width: 20px;
+            height: 20px;
+            y: (parent.height - self.height) / 2;
+            border-width: 1px;
+            border-radius: 2px;
+            border-color: root.checked ? Theme.red-hot : (ta.has-hover ? Theme.dim : Theme.faint);
+            background: root.checked ? Theme.red-deep : #0d0c0d;
+            animate background { duration: 120ms; }
+            Text { visible: root.checked; text: "✔"; color: #f3e4d8; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Text { text: root.label; color: root.enabled ? Theme.text : Theme.faint; font-size: Theme.fs-body; vertical-alignment: center; }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.checked = !root.checked; root.toggled(); }
+    }
+    // Keyboard focus only (Tab). A scope that takes the focus on click would swallow the first press above the TouchArea.
+    fs := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if (e.text == " " || e.text == "\n") { root.checked = !root.checked; root.toggled(); return accept; }
+            reject
+        }
+    }
+    FocusRing { active: fs.has-focus; x: -6px; y: -2px; width: parent.width + 12px; height: parent.height + 4px; }
+}
+
+// ---- uniform secondary button ------------------------------------------------------------------------------------------
+component Btn inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> primary: false;
+    callback clicked();
+    public function focus-button() { fs.focus(); }
+    height: 36px;
+    min-width: 190px;
+    border-width: 1px;
+    border-radius: 3px;
+    border-color: root.enabled ? (ta.has-hover || root.primary ? Theme.red-hot : Theme.btn-border) : Theme.card-line;
+    background: root.enabled ? (ta.has-hover ? Theme.btn-hover : (root.primary ? Theme.btn-primary : Theme.btn-base)) : #0c0a0b;
+    animate background { duration: 120ms; }
+    Text {
+        text: root.label;
+        color: root.enabled ? Theme.text : Theme.faint;
+        font-size: Theme.fs-small;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    // Keyboard focus only (Tab). A scope that takes the focus on click would swallow the first press above the TouchArea.
+    fs := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if (e.text == " " || e.text == "\n") { root.clicked(); return accept; }
+            reject
+        }
+    }
+    FocusRing { active: fs.has-focus; x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; }
+}
+
+// Small inline action: no button surface; follows the current theme's accent.
+component TextLink inherits Text {
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback clicked();
+    text: root.label;
+    color: root.enabled ? Theme.red-hot : Theme.faint;
+    font-size: Theme.fs-caption;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    fs := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if (e.text == " " || e.text == "\n") { root.clicked(); return accept; }
+            reject
+        }
+    }
+    FocusRing { active: fs.has-focus; x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; }
+}
+
+// ---- title bar buttons (drawn, no font dependency) --------------------------------------------------------------------
+component BarButton inherits Rectangle {
+    // kind: 0 gear, 1 minimize, 4 close (the window has a fixed size: no maximize/restore)
+    in property <int> kind;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 46px;
+    height: 44px;
+    background: ta.has-hover ? (root.kind == 4 ? #a3222a : #ffffff14) : transparent;
+    animate background { duration: 100ms; }
+    property <color> ink: ta.has-hover ? #fbf3ea : Theme.dim;
+    if root.kind == 0 : Text { text: "⚙"; color: root.ink; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+    if root.kind == 2 : Path { width: 14px; height: 14px; x: (parent.width - 14px) / 2; y: (parent.height - 14px) / 2; viewbox-width: 14; viewbox-height: 14; commands: "M 7 1 L 1 7 L 7 13 M 1 7 L 14 7"; stroke: root.ink; stroke-width: 1.4px; }
+    if root.kind == 1 : Path { width: 12px; height: 12px; x: (parent.width - 12px) / 2; y: (parent.height - 12px) / 2; viewbox-width: 12; viewbox-height: 12; commands: "M 0 6 L 12 6"; stroke: root.ink; stroke-width: 1.4px; }
+    if root.kind == 4 : Path { width: 12px; height: 12px; x: (parent.width - 12px) / 2; y: (parent.height - 12px) / 2; viewbox-width: 12; viewbox-height: 12; commands: "M 1 1 L 11 11 M 11 1 L 1 11"; stroke: root.ink; stroke-width: 1.4px; }
+    ta := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    fs := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if (e.text == " " || e.text == "\n") { root.clicked(); return accept; }
+            reject
+        }
+    }
+    FocusRing { active: fs.has-focus; x: 3px; y: 3px; width: parent.width - 6px; height: parent.height - 6px; }
+}
+
+// ---- advanced view building blocks --------------------------------------------------------------------------------------
+// Slider for the frame-rate limit: drag or click on the track; the integer value is the number of frames per second.
+component FpsSlider inherits Rectangle {
+    in property <bool> enabled: true;
+    in-out property <int> value: 60;
+    in property <int> minimum: 30;
+    in property <int> maximum: 240;
+    callback released();
+    height: 28px;
+    function set-from(x: length) {
+        root.value = Math.clamp(Math.round(root.minimum + (x - 9px) / (root.width - 18px) * (root.maximum - root.minimum)), root.minimum, root.maximum);
+    }
+    Rectangle { x: 0px; y: (parent.height - self.height) / 2; width: parent.width; height: 4px; border-radius: 2px; background: #2a2224; }
+    Rectangle { x: 0px; y: (parent.height - self.height) / 2; height: 4px; border-radius: 2px; width: handle.x + 9px; background: root.enabled ? Theme.red-deep : Theme.faint; }
+    handle := Rectangle {
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        y: (parent.height - self.height) / 2;
+        x: (parent.width - self.width) * (root.value - root.minimum) / (root.maximum - root.minimum);
+        background: root.enabled ? (ta.has-hover || ta.pressed ? Theme.red-hot : Theme.red) : Theme.faint;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) { root.set-from(self.mouse-x); }
+            if (e.kind == PointerEventKind.up) { root.released(); }
+        }
+        moved => { if (self.pressed) { root.set-from(self.mouse-x); } }
+    }
+}
+
+component Card inherits Rectangle {
+    in property <string> title;
+    in property <color> accent: Theme.red;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.card-line;
+    border-radius: 3px;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { width: 3px; height: 14px; background: root.accent; y: 2px; }
+            Text { text: root.title; color: Theme.dim; font-size: Theme.fs-caption; font-weight: 700; letter-spacing: 3px; vertical-alignment: center; }
+        }
+        @children
+    }
+}
+
+component InfoRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 14px;
+    Text { text: root.label; width: 96px; color: Theme.dim; font-size: Theme.fs-small; vertical-alignment: top; }
+    Text { text: root.value == "" ? "–" : root.value; color: Theme.text; font-size: Theme.fs-small; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: top; }
+}
+
+component Field inherits VerticalLayout {
+    in property <string> caption;
+    in property <string> hint;
+    in property <bool> enabled: true;
+    in-out property <string> value;
+    callback edited();
+    spacing: 4px;
+    Text { text: root.caption; color: Theme.dim; font-size: Theme.fs-small; }
+    LineEdit { enabled: root.enabled; text <=> root.value; placeholder-text: root.hint; font-size: Theme.fs-small; edited => { root.edited(); } }
+}
+
+component Entry inherits Rectangle {
+    in property <StatusRow> entry;
+    height: content.preferred-height + 6px;
+    content := HorizontalLayout {
+        padding-top: 3px;
+        spacing: 10px;
+        Text {
+            width: 18px;
+            vertical-alignment: top;
+            font-weight: 700;
+            text: entry.level == 0 ? "✔" : entry.level == 1 ? "▲" : "✘";
+            color: entry.level == 0 ? Theme.ok : entry.level == 1 ? Theme.warn : Theme.bad;
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 1px;
+            Text { text: entry.text; wrap: word-wrap; color: Theme.text; font-size: Theme.fs-small; }
+            Text { visible: entry.hint != ""; text: entry.hint; wrap: word-wrap; font-size: Theme.fs-caption; color: Theme.dim; }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: @tr("The Secret World – Forever");
+    // No window icon here: with this Slint/winit version the icon never reaches the window manager (X11 _NET_WM_ICON stays
+    // empty, Wayland has no window icons). The icon comes from the desktop entry that matches the app id (packaging/linux).
+    no-frame: true;
+    // Fixed size: minimum = maximum makes the window non-resizable (Slint's winit backend turns that into "not resizable"
+    // for Wayland and X11; no border dragging, no maximize). The size is a property so that the program can fit it to a
+    // small display; HiDPI is handled by Slint's logical pixels.
+    in property <length> win-width: 1000px;
+    in property <length> win-height: 660px;
+    preferred-width: root.win-width;
+    min-width: root.win-width;
+    max-width: root.win-width;
+    preferred-height: root.win-height;
+    min-height: root.win-height;
+    max-height: root.win-height;
+    background: Theme.ink;
+
+    // normal view
+    in property <string> status-text;
+    in property <int> status-kind; // 0 normal, 1 hint, 2 problem
+    in property <bool> can-play;
+    in property <bool> running;
+    in property <bool> busy;
+    in-out property <bool> skip-intro;
+    // progress (only values that were really measured are set)
+    in property <bool> progress-visible;
+    in property <bool> progress-indeterminate;
+    in property <float> progress-fraction;
+    in property <string> progress-title;
+    in property <string> progress-detail;
+    // optional user-supplied artwork
+    in property <bool> has-background;
+    in property <image> background-image;
+    // advanced view
+    in-out property <bool> advanced;
+    in property <[StatusRow]> rows;
+    in property <string> detected-client;
+    in property <string> detected-runtime;
+    in property <string> detected-prefix;
+    in property <string> patch-status;
+    in property <string> version-info;
+    in property <string> message;
+    in-out property <string> client-override;
+    in-out property <string> runner-override;
+    in-out property <string> prefix-override;
+    in-out property <bool> virtual-desktop;
+    in-out property <string> desktop-size;
+    // frame-rate limit: the slider value (30..240), the separate "unlimited" switch, the DXVK FPS counter
+    in-out property <int> fps-limit: 60;
+    in-out property <bool> fps-unlimited;
+    in-out property <bool> fps-hud;
+    in property <[string]> resolution-names;
+    in-out property <int> resolution-index;
+    in property <bool> resolution-unavailable;
+    in property <bool> resolution-legacy;
+    out property <string> fps-label: root.fps-unlimited ? @tr("Frame rate limit: unlimited") : @tr("Frame rate limit: {} FPS", root.fps-limit);
+    in-out property <string> install-base;
+    in property <string> install-status;
+    in property <string> install-action-label;
+    in property <bool> install-action-enabled;
+    in property <bool> install-downloading;
+    in-out property <bool> install-consent;
+    in-out property <bool> microsoft-consent;
+    callback microsoft-terms-link(int);
+    out property <bool> setup-consents-ready: root.install-consent && root.microsoft-consent;
+    in-out property <bool> install-unverified;
+    in-out property <string> install-import-path;
+    // main view: no usable installation yet -> the big button installs (or continues the installation)
+    in property <bool> install-mode;
+    in property <string> install-location;
+    in property <string> install-main-label;
+    in property <string> install-notice;
+    /// One of Funcom's programs is working and has not confirmed completion: the big button waits (never interrupts it).
+    in property <bool> install-waiting;
+    /// What the installation waits for, in plain words.
+    in property <string> install-hint;
+    in-out property <bool> gamescope-enabled;
+    in property <string> cache-status;
+    // compiler profile (native DLL set of the tested configuration) and diagnostic logging
+    in-out property <string> native-dir;
+    in property <string> profile-status;
+    in-out property <bool> diag-enabled;
+    in-out property <int> diag-level-index;
+    in property <[string]> diag-level-names;
+    // theme selection (entries come from the program, names/description already translated)
+    in property <[string]> theme-names;
+    in-out property <int> theme-index;
+    in property <string> theme-description;
+    // language selection (entries come from the program: "automatic" first, then every available language)
+    in property <[string]> language-names;
+    in-out property <int> language-index;
+    // exit confirmation (closing through the title bar, the window manager or Ctrl+Q asks first)
+    in-out property <bool> confirm-exit;
+    // translated texts the program and the tests read back
+    // set by the program: inside a Flatpak sandbox the game ends together with the launcher window
+    in property <bool> game-ends-with-launcher;
+    out property <string> exit-question: (root.running && root.game-ends-with-launcher) ? @tr("The game is running. If you exit the launcher now, the game ends too. Exit anyway?") : @tr("Are you sure you want to exit the launcher?");
+    out property <string> exit-yes: (root.running && root.game-ends-with-launcher) ? @tr("Yes, end the game") : @tr("Yes, exit");
+    out property <string> exit-no: @tr("No, go back");
+    out property <string> play-label: root.running ? @tr("STARTING …") : (root.install-mode ? root.install-main-label : @tr("PLAY"));
+
+    callback play();
+    callback recheck();
+    callback rebuild-prefix();
+    callback install-action();
+    callback install-browse();
+    callback install-adopt-browse();
+    callback install-patcher();
+    callback install-cancel();
+    callback install-base-edited();
+    callback cache-rebuild();
+    callback cache-restore();
+    callback profile-install();
+    callback profile-remove();
+    callback open-logs();
+    callback make-bundle();
+    callback settings-changed();
+    callback resolution-selected(int);
+    callback refresh-display();
+    callback close-window();      // the user confirmed: leave the launcher
+    callback language-selected(int);
+    callback theme-selected(int);
+
+    // Escape leaves the advanced view (keyboard path back, like the "Zurück" button). The scope holds the initial focus so
+    // that the key works although clicks on the controls no longer move the keyboard focus.
+    forward-focus: outer;
+    outer := FocusScope {
+        key-pressed(e) => {
+            if (root.confirm-exit) { return reject; }
+            if (e.text == Key.Escape && root.advanced) { root.advanced = false; return accept; }
+            if (e.modifiers.control && (e.text == "q" || e.text == "Q")) { root.confirm-exit = true; return accept; }
+            reject
+        }
+
+        // ---- atmosphere ----
+        Rectangle {
+            background: @linear-gradient(165deg, Theme.bg-start 0%, Theme.bg-mid 55%, Theme.bg-end 100%);
+        }
+        if root.has-background : Image { source: root.background-image; image-fit: cover; opacity: 0.30; }
+        Rectangle {
+            x: parent.width * 0.5 - 420px;
+            y: -140px;
+            width: 840px;
+            height: 560px;
+            background: @radial-gradient(circle, Theme.glow 0%, #00000000 68%);
+        }
+        Rectangle {
+            background: @radial-gradient(circle, #00000000 55%, #000000cc 100%);
+        }
+
+        // ---- normal view ----
+        if !root.advanced : VerticalLayout {
+            padding: 36px;
+            padding-top: 56px;
+            spacing: 0px;
+            alignment: center;
+
+            Text {
+                text: "T H E   S E C R E T   W O R L D";
+                horizontal-alignment: center;
+                color: Theme.text;
+                font-family: Theme.serif;
+                font-size: Theme.fs-title;
+                font-weight: 700;
+                letter-spacing: 4px;
+            }
+            Rectangle { height: 14px; }
+            Rectangle { height: 1px; background: @linear-gradient(90deg, #00000000 0%, Theme.red 50%, #00000000 100%); }
+            Rectangle { height: 14px; }
+            Text {
+                text: @tr("F O R E V E R");
+                horizontal-alignment: center;
+                color: Theme.red-hot;
+                font-family: Theme.serif;
+                font-size: 13px;
+                letter-spacing: 6px;
+            }
+            Rectangle { height: root.install-mode ? 24px : 64px; }
+            if root.install-mode : VerticalLayout {
+                spacing: 10px;
+                Text { text: @tr("Installation folder"); horizontal-alignment: center; color: Theme.faint; font-size: Theme.fs-caption; }
+                Text { text: root.install-location; horizontal-alignment: center; color: Theme.dim; font-size: Theme.fs-small; overflow: elide; }
+                HorizontalLayout {
+                    alignment: center;
+                    QuietCheck {
+                        label: @tr("I agree to the downloads");
+                        enabled: !root.busy && !root.confirm-exit;
+                        checked <=> root.install-consent;
+                        toggled => { root.install-base-edited(); }
+                    }
+                }
+                if root.install-hint != "" : Text { text: root.install-hint; horizontal-alignment: center; color: Theme.warn; font-size: Theme.fs-caption; wrap: word-wrap; }
+                Text { text: @tr("Original installer from Funcom, the Wine/Proton runtime (GE-Proton) from GitHub and Microsoft's Direct3D components, about 700 MB. Everything is verified by checksum; nothing is installed outside the installation folder."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
+                QuietCheck {
+                    label: @tr("I accept the Microsoft SDK/runtime terms for local component installation");
+                    enabled: !root.busy && !root.confirm-exit;
+                    checked <=> root.microsoft-consent;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 12px;
+                    TextLink { label: @tr("SDK terms (online copy)"); enabled: !root.confirm-exit; clicked => { root.microsoft-terms-link(0); } }
+                    TextLink { label: @tr("Runtime terms (Microsoft section)"); enabled: !root.confirm-exit; clicked => { root.microsoft-terms-link(1); } }
+                }
+                Text { text: @tr("Read the linked Microsoft terms before accepting. The links are online copies; the runtime page also contains unrelated product terms. Both consents are required before installing."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
+            }
+            Rectangle { height: root.install-mode ? 20px : 0px; }
+            HorizontalLayout {
+                alignment: center;
+                PlayButton {
+                    label: root.play-label;
+                    enabled: (root.install-mode ? (root.setup-consents-ready && !root.install-waiting) : root.can-play) && !root.busy && !root.running && !root.confirm-exit;
+                    clicked => { root.play(); }
+                }
+            }
+            Rectangle { height: 24px; }
+            if !root.install-mode : VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    alignment: center;
+                    QuietCheck {
+                        label: @tr("Skip intro videos");
+                        enabled: !root.confirm-exit;
+                        checked <=> root.skip-intro;
+                        toggled => { root.settings-changed(); }
+                    }
+                }
+                Rectangle { height: 10px; }
+                Text { text: root.fps-label; horizontal-alignment: center; color: Theme.faint; font-size: Theme.fs-caption; }
+            }
+            Rectangle { height: 28px; }
+            VerticalLayout {
+                spacing: 6px;
+                Text {
+                    text: root.progress-visible ? root.progress-title : root.status-text;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                    font-size: Theme.fs-small + 1px;
+                    color: root.progress-visible ? Theme.dim : (root.status-kind == 2 ? Theme.bad : root.status-kind == 1 ? Theme.warn : Theme.dim);
+                }
+                Rectangle {
+                    visible: root.progress-visible;
+                    height: 3px;
+                    background: #1a1516;
+                    Rectangle {
+                        x: root.progress-indeterminate ? (parent.width - self.width) * (0.5 + 0.5 * sin(animation-tick() / 1400ms * 1turn)) : 0px;
+                        width: root.progress-indeterminate ? parent.width * 0.22 : parent.width * root.progress-fraction;
+                        background: Theme.red-hot;
+                    }
+                }
+                Text {
+                    visible: root.progress-visible;
+                    text: root.progress-detail;
+                    horizontal-alignment: center;
+                    font-size: Theme.fs-caption;
+                    color: Theme.faint;
+                }
+            }
+        }
+
+        // ---- advanced view ----
+        if root.advanced : Rectangle {
+            y: 44px;
+            height: parent.height - 44px;
+            background: #0a0809e6;
+            ScrollView {
+                VerticalLayout {
+                    padding-left: 32px;
+                    padding-right: 32px;
+                    padding-top: 18px;
+                    padding-bottom: 26px;
+                    spacing: Theme.gap;
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text { text: @tr("Advanced view"); color: Theme.text; font-family: Theme.serif; font-size: Theme.fs-heading; letter-spacing: 3px; vertical-alignment: center; horizontal-stretch: 1; }
+
+                    }
+                    Text {
+                        text: @tr("Normally not needed: everything is detected automatically. Here you can see what was detected and, in exceptional cases, enter your own values.");
+                        color: Theme.dim; font-size: Theme.fs-small; wrap: word-wrap;
+                    }
+
+                    Card {
+                        title: @tr("INSTALLATION");
+                        accent: Theme.warn;
+                        Text { text: root.install-status; color: Theme.text; font-size: Theme.fs-small; wrap: word-wrap; }
+                        Text { text: root.install-location; color: Theme.dim; font-size: Theme.fs-caption; overflow: elide; }
+                        if root.install-notice != "" : Text { text: root.install-notice; color: Theme.warn; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Btn { label: @tr("Start the original patcher"); min-width: 200px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.install-patcher(); } }
+                            if root.install-downloading : Btn { label: @tr("Cancel download"); min-width: 160px; enabled: !root.confirm-exit; clicked => { root.install-cancel(); } }
+                        }
+                        Text { text: @tr("The patcher fetches and completes the game data and continues after an interruption."); color: Theme.faint; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Btn { label: @tr("Use a local installer …"); min-width: 200px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.install-browse(); } }
+                            Btn { label: @tr("Use an existing installation …"); min-width: 220px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.install-adopt-browse(); } }
+                        }
+                        if root.install-import-path != "" : Text { text: root.install-import-path; color: Theme.dim; font-size: Theme.fs-caption; overflow: elide; }
+                        if root.install-import-path != "" : QuietCheck { enabled: !root.busy && !root.confirm-exit; label: @tr("I checked this installer file; allow exactly this file (its fingerprint) to run"); checked <=> root.install-unverified; toggled => { root.install-base-edited(); } }
+                    }
+
+                    Card {
+                        title: @tr("DETECTED COMPONENTS");
+                        accent: Theme.ok;
+                        InfoRow { label: @tr("Client"); value: root.detected-client; }
+                        InfoRow { label: @tr("Wine / Proton"); value: root.detected-runtime; }
+                        InfoRow { label: @tr("Wine prefix"); value: root.detected-prefix; }
+                    }
+
+                    Card {
+                        title: @tr("LANGUAGE");
+                        accent: Theme.dim;
+                        HorizontalLayout {
+                            spacing: 14px;
+                            Text { text: @tr("Language of the launcher"); color: Theme.dim; font-size: Theme.fs-small; vertical-alignment: center; }
+                            ComboBox {
+                                enabled: !root.confirm-exit;
+                                width: 260px;
+                                model: root.language-names;
+                                current-index: root.language-index;
+                                selected(value) => { root.language-selected(self.current-index); }
+                            }
+                        }
+                    }
+
+                    Card {
+                        title: @tr("APPEARANCE");
+                        accent: Theme.red-hot;
+                        HorizontalLayout {
+                            spacing: 14px;
+                            Text { text: @tr("Colour theme"); color: Theme.dim; font-size: Theme.fs-small; vertical-alignment: center; }
+                            ComboBox {
+                                enabled: !root.confirm-exit;
+                                width: 260px;
+                                model: root.theme-names;
+                                current-index: root.theme-index;
+                                selected(value) => { root.theme-selected(self.current-index); }
+                            }
+                        }
+                        Text { text: root.theme-description; color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                    }
+
+                    Card {
+                        title: @tr("DISPLAY");
+                        accent: Theme.red-hot;
+                        HorizontalLayout {
+                            spacing: 14px;
+                            Text { text: @tr("Game resolution"); color: Theme.dim; font-size: Theme.fs-small; vertical-alignment: center; }
+                            ComboBox {
+                                width: 340px; enabled: !root.running && !root.busy && !root.confirm-exit;
+                                model: root.resolution-names; current-index: root.resolution-index;
+                                selected(value) => { root.resolution-index = self.current-index; root.resolution-selected(self.current-index); }
+                            }
+                        }
+                        Text { text: @tr("A selected resolution applies only to the game in a private Wine desktop. The desktop resolution stays unchanged."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        if root.resolution-legacy : Text { text: @tr("Legacy display overrides are active. Select Managed by the game to leave resolution to the game."); color: Theme.warn; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        if root.resolution-unavailable && !root.resolution-legacy : Text { text: @tr("The saved resolution is unavailable. Select an available mode or Managed by the game before playing."); color: Theme.warn; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        Text { text: root.fps-label; color: Theme.text; font-size: Theme.fs-body; }
+                        HorizontalLayout {
+                            spacing: 18px;
+                            FpsSlider { width: 320px; value <=> root.fps-limit; enabled: !root.fps-unlimited && !root.confirm-exit; released => { root.settings-changed(); } }
+                            QuietCheck { enabled: !root.confirm-exit; label: @tr("Unlimited"); checked <=> root.fps-unlimited; toggled => { root.settings-changed(); } }
+                        }
+                        QuietCheck { enabled: !root.confirm-exit; label: @tr("Show the FPS counter in the game (DXVK)"); checked <=> root.fps-hud; toggled => { root.settings-changed(); } }
+                        Text { text: @tr("Default: 60 FPS. Free from 30 to 240 FPS, or unlimited. Applies at the next game start."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                    }
+
+                    // Hidden for rc.3; underlying controls, configuration and checks are retained.
+                    if false : Card {
+                        title: @tr("GAMESCOPE (OPTIONAL)");
+                        accent: Theme.red-hot;
+                        QuietCheck { enabled: !root.confirm-exit; label: @tr("Run the game in a gamescope window"); checked <=> root.gamescope-enabled; toggled => { root.settings-changed(); } }
+                        Text { text: @tr("Off by default and not needed: the normal start works without gamescope. If switched on, gamescope must be installed; the picture is shown at the full screen resolution without scaling, so the user interface keeps its size. Cannot be combined with the virtual desktop."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                    }
+
+                    Card {
+                        title: @tr("SHADER CACHE");
+                        accent: Theme.faint;
+                        Text { text: root.cache-status; color: Theme.dim; font-size: Theme.fs-small; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Btn { label: @tr("Rebuild shader cache"); min-width: 260px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.cache-rebuild(); } }
+                            Btn { label: @tr("Undo"); min-width: 130px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.cache-restore(); } }
+                        }
+                        Text { text: @tr("The old cache is only set aside, never deleted; the game builds a new one at the next start."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                    }
+
+                    Card {
+                        title: @tr("COMPILER PROFILE");
+                        accent: Theme.warn;
+                        Text { text: root.profile-status; color: Theme.dim; font-size: Theme.fs-small; wrap: word-wrap; }
+                        Field { enabled: !root.confirm-exit; caption: @tr("Experimental v7 profile: folder with four checked 32-bit DLLs (including compiler 47)"); hint: @tr("not set"); value <=> root.native-dir; edited => { root.settings-changed(); } }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Btn { label: @tr("Install profile"); min-width: 220px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.profile-install(); } }
+                            Btn { label: @tr("Remove profile"); min-width: 220px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.profile-remove(); } }
+                        }
+                        Text { text: @tr("Normal installation uses the Microsoft 2010 profile automatically. This manual v7 profile is experimental and needs your own compiler 47; it is not downloaded. Files are checked and replaced files backed up."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                    }
+
+                    Card {
+                        title: @tr("DIAGNOSTICS");
+                        accent: Theme.faint;
+                        HorizontalLayout {
+                            spacing: 14px;
+                            QuietCheck { enabled: !root.confirm-exit; label: @tr("Enable diagnostic logging"); checked <=> root.diag-enabled; toggled => { root.settings-changed(); } }
+                            ComboBox {
+                                enabled: root.diag-enabled && !root.confirm-exit;
+                                width: 200px;
+                                model: root.diag-level-names;
+                                current-index: root.diag-level-index;
+                                selected(value) => { root.diag-level-index = self.current-index; root.settings-changed(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Btn { label: @tr("Open log folder"); min-width: 220px; enabled: !root.confirm-exit; clicked => { root.open-logs(); } }
+                            Btn { label: @tr("Create diagnostic package"); min-width: 280px; enabled: !root.confirm-exit; clicked => { root.make-bundle(); } }
+                        }
+                        Text { text: @tr("Off by default. When on, each start writes a private log (newest 10 kept) next to the configuration. Logs and diagnostic packages are masked, but can still contain personal data such as paths and hardware; nothing is ever sent anywhere. Read a package before you share it."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                    }
+
+                    // Hidden for rc.3; underlying controls, configuration and checks are retained.
+                    if false : Card {
+                        title: @tr("MANUAL OVERRIDES");
+                        accent: Theme.warn;
+                        Text { text: @tr("Only fill in if the automatic detection fails. Empty fields mean “automatic”."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        Field { enabled: !root.confirm-exit; caption: @tr("Client (TheSecretWorldDX11.exe)"); hint: @tr("automatic"); value <=> root.client-override; edited => { root.settings-changed(); } }
+                        Field { enabled: !root.confirm-exit; caption: @tr("Wine / Proton (…/files/bin/wine)"); hint: @tr("automatic"); value <=> root.runner-override; edited => { root.settings-changed(); } }
+                        Field { enabled: !root.confirm-exit; caption: @tr("Wine prefix"); hint: @tr("automatic (managed prefix)"); value <=> root.prefix-override; edited => { root.settings-changed(); } }
+                        HorizontalLayout {
+                            spacing: 14px;
+                            QuietCheck { enabled: !root.confirm-exit; label: @tr("Virtual Wine desktop (compatibility mode)"); checked <=> root.virtual-desktop; toggled => { root.settings-changed(); } }
+                            LineEdit { width: 130px; enabled: root.virtual-desktop && !root.confirm-exit; text <=> root.desktop-size; placeholder-text: "1920x1200"; font-size: Theme.fs-small; edited => { root.settings-changed(); } }
+                        }
+                    }
+
+                    // Hidden for rc.3; underlying controls, configuration and checks are retained.
+                    if false : Card {
+                        title: @tr("CHECKS");
+                        accent: Theme.red;
+                        for r in root.rows : Entry { entry: r; }
+                    }
+
+                    Card {
+                        title: @tr("PATCHER");
+                        accent: Theme.faint;
+                        Text { text: root.patch-status; color: Theme.dim; font-size: Theme.fs-small; wrap: word-wrap; }
+                        Text { text: root.version-info; color: Theme.faint; font-size: Theme.fs-small; wrap: word-wrap; }
+                    }
+
+                    Text { visible: root.message != ""; text: root.message; color: Theme.warn; font-size: Theme.fs-small; wrap: word-wrap; }
+
+                    if false : HorizontalLayout {
+                        spacing: 12px;
+                        Btn { label: @tr("Check again"); enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.recheck(); } }
+                        Btn { label: @tr("Check and update prefix"); min-width: 260px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.rebuild-prefix(); } }
+                    }
+                }
+            }
+        }
+
+        // ---- own title bar: drag area plus window controls (no system decoration) ----
+        Rectangle {
+            y: 0px;
+            height: 44px;
+            background: #00000055;
+            WindowMoveArea { }
+            HorizontalLayout {
+                padding-left: 16px;
+                Text {
+                    text: root.advanced ? @tr("ADVANCED VIEW") : "";
+                    color: Theme.faint;
+                    font-size: Theme.fs-caption;
+                    letter-spacing: 3px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                BarButton { kind: root.advanced ? 2 : 0; enabled: !root.confirm-exit; clicked => { root.advanced = !root.advanced; if root.advanced { root.refresh-display(); } } }
+                BarButton { kind: 1; enabled: !root.confirm-exit; clicked => { root.minimized = true; } }
+                BarButton { kind: 4; enabled: !root.confirm-exit; clicked => { root.confirm-exit = true; } }
+            }
+        }
+
+        // ---- exit confirmation: our own dark dialog, above everything (a scrim swallows pointer input below) ----
+        if root.confirm-exit : Rectangle {
+            background: #000000b8;
+            TouchArea { }
+            dialog := FocusScope {
+                focus-on-click: false;
+                init => { no-btn.focus-button(); }
+                key-pressed(e) => {
+                    if (e.text == Key.Escape) { root.confirm-exit = false; outer.focus(); return accept; }
+                    reject
+                }
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: min(parent.width - 48px, 500px);
+                    height: 196px;
+                    background: Theme.card;
+                    border-width: 1px;
+                    border-color: Theme.red;
+                    border-radius: 4px;
+                    drop-shadow-blur: 36px;
+                    drop-shadow-color: Theme.shadow;
+                    VerticalLayout {
+                        padding: 28px;
+                        spacing: 26px;
+                        alignment: center;
+                        Text {
+                            text: root.exit-question;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                            color: Theme.text;
+                            font-family: Theme.serif;
+                            font-size: Theme.fs-heading;
+                        }
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 16px;
+                            Btn { label: root.exit-yes; min-width: 190px; clicked => { root.close-window(); } }
+                            no-btn := Btn { label: root.exit-no; min-width: 190px; primary: true; clicked => { root.confirm-exit = false; outer.focus(); } }
+                        }
+                    }
+                }
+            }
+        }
+
+        // outer frame line (replaces the system window border)
+        Rectangle { border-width: 1px; border-color: Theme.frame; background: transparent; }
+    }
+}

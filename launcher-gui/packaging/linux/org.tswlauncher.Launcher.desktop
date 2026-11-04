@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=The Secret World – Forever
+Name[de]=The Secret World – Forever
+GenericName=Game launcher
+GenericName[de]=Spielstarter
+Comment=Starts the original The Secret World client
+Comment[de]=Startet den originalen The Secret World Client
+Exec=tsw-launcher
+Icon=org.tswlauncher.Launcher
+StartupWMClass=org.tswlauncher.Launcher
+Terminal=false
+Categories=Game;
+Keywords=The Secret World;TSW;Launcher;

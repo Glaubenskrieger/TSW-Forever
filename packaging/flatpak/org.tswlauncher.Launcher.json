@@ -1,0 +1,77 @@
+{
+  "app-id": "org.tswlauncher.Launcher",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "25.08",
+  "sdk": "org.freedesktop.Sdk",
+  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "command": "tsw-launcher",
+  "x-verification-note": "Runtime 25.08 and this extension layout were tested on one Steam Machine; this does not establish compatibility with every driver or distribution. ONE host folder is granted, ~/Games/The Secret World (the whole installation: prefix with the game, runtime, downloads, caches, logs); only the small configuration lives in the app data folder; files are chosen through the portal.",
+  "finish-args": [
+    "--share=ipc",
+    "--share=network",
+    "--socket=x11",
+    "--socket=wayland",
+    "--socket=pulseaudio",
+    "--device=dri",
+    "--allow=multiarch",
+    "--filesystem=~/Games/The Secret World:create"
+  ],
+  "add-extensions": {
+    "org.freedesktop.Platform.Compat.i386": {
+      "directory": "lib/i386-linux-gnu",
+      "version": "25.08"
+    },
+    "org.freedesktop.Platform.Compat.i386.Debug": {
+      "directory": "lib/debug/lib/i386-linux-gnu",
+      "version": "25.08",
+      "no-autodownload": true
+    },
+    "org.freedesktop.Platform.GL32": {
+      "directory": "lib/i386-linux-gnu/GL",
+      "version": "1.4",
+      "versions": "25.08;1.4",
+      "subdirectories": true,
+      "no-autodownload": true,
+      "autodelete": false,
+      "add-ld-path": "lib",
+      "merge-dirs": "vulkan/icd.d;glvnd/egl_vendor.d;OpenCL/vendors;lib/dri;lib/d3d;vulkan/explicit_layer.d;vulkan/implicit_layer.d",
+      "download-if": "active-gl-driver",
+      "enable-if": "active-gl-driver"
+    }
+  },
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": {
+      "CARGO_HOME": "/run/build/tsw-launcher/cargo",
+      "CARGO_NET_OFFLINE": "true"
+    }
+  },
+  "modules": [
+    {
+      "name": "tsw-launcher",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cargo --offline build --release --locked --manifest-path patcher/Cargo.toml",
+        "cargo --offline build --release --locked --manifest-path launcher/Cargo.toml",
+        "cargo --offline build --release --locked --manifest-path launcher-gui/Cargo.toml",
+        "install -Dm755 launcher/target/release/tsw-launch /app/bin/tsw-launch",
+        "install -Dm755 launcher-gui/target/release/tsw-launcher /app/bin/tsw-launcher",
+        "install -Dm644 launcher-gui/packaging/linux/org.tswlauncher.Launcher.desktop /app/share/applications/org.tswlauncher.Launcher.desktop",
+        "install -Dm644 packaging/flatpak/org.tswlauncher.Launcher.metainfo.xml /app/share/metainfo/org.tswlauncher.Launcher.metainfo.xml",
+        "for d in launcher-gui/packaging/linux/icons/hicolor/*; do s=$(basename \"$d\"); if [ \"$s\" = scalable ]; then install -Dm644 \"$d/apps/org.tswlauncher.Launcher.svg\" \"/app/share/icons/hicolor/scalable/apps/org.tswlauncher.Launcher.svg\"; else install -Dm644 \"$d/apps/org.tswlauncher.Launcher.png\" \"/app/share/icons/hicolor/$s/apps/org.tswlauncher.Launcher.png\"; fi; done",
+        "mkdir -p /app/lib/i386-linux-gnu/GL /app/lib/debug/lib/i386-linux-gnu /app/etc",
+        "echo /app/lib/i386-linux-gnu > /app/etc/ld.so.conf",
+        "mkdir -p /app/share/licenses/tsw-forever/launcher-gui",
+        "cp -a LICENSES /app/share/licenses/tsw-forever/LICENSES",
+        "install -m644 LICENSE THIRD-PARTY-NOTICES.md /app/share/licenses/tsw-forever/",
+        "install -m644 launcher-gui/Cargo.lock /app/share/licenses/tsw-forever/launcher-gui/Cargo.lock"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../../build/flatpak/src"
+        }
+      ]
+    }
+  ]
+}
