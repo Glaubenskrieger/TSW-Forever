@@ -1,0 +1,4 @@
+# Windows (MSVC) only: link the C runtime statically so that tsw-launcher.exe and tsw-launch.exe do not import VCRUNTIME140.dll
+# (absent on a fresh Windows 11 installation). Other targets, including the Linux/Flatpak build, are not affected by this section.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

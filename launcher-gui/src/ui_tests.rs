@@ -38,7 +38,23 @@ thread_local! {
 }
 
 /// A fresh window without any focus or hover history. The platform is per thread, so every test installs its own.
+/// The detection reads process-wide state (the `ProgramFiles` variables of the gate test, the user's "ignored installations"): the tests that change it run one
+/// after the other.
+static GLOBAL_SEARCH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Resets the user's search decision when a test ends, also when it fails.
+struct ResetUserSearch;
+
+impl Drop for ResetUserSearch {
+    fn drop(&mut self) {
+        tsw_launch::winnative::reset_user_search();
+    }
+}
+
 fn fresh() -> MainWindow {
+    // a machine with a real game installation registered must not influence any window test
+    #[cfg(windows)]
+    std::env::set_var("TSW_LAUNCH_NO_SYSTEM_SEARCH", "1");
     let adapter = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     adapter.set_size(PhysicalSize::new(WIDTH, HEIGHT));
     let _ = slint::platform::set_platform(Box::new(Headless(adapter.clone())));
@@ -573,8 +589,23 @@ fn the_theme_selector_acts_on_the_first_click() {
 
 #[test]
 fn files_of_the_game_are_not_enough_funcom_has_to_confirm_and_the_window_follows_by_itself() {
+    let _serial = GLOBAL_SEARCH.lock().unwrap_or_else(|e| e.into_inner());
+    // this test is about Funcom's confirmation, not about the detection pause: the pause is off for its duration
+    let _reset = ResetUserSearch;
+    tsw_launch::winnative::set_autodetect_pause_enabled(false);
     use tsw_launch::install::{self, Evidence, Layout};
     use tsw_launch::patchlog::Verdict;
+    #[cfg(windows)]
+    {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let root = std::env::temp_dir().join(format!("tsw-test-programfiles-{}", std::process::id()));
+            for key in ["ProgramFiles(x86)", "ProgramFiles", "ProgramW6432"] {
+                std::env::set_var(key, &root);
+            }
+            std::env::set_var("TSW_LAUNCH_NO_SYSTEM_SEARCH", "1");
+        });
+    }
     let (ui, state, _may_close, path) = wired("gate");
     let base = path.parent().unwrap().join("Games").join("The Secret World");
     let game = install::game_path(&Layout { base: base.clone() });
@@ -667,7 +698,8 @@ fn resolution_selection_is_saved_without_erasing_hidden_settings_or_fps() {
 
 #[test]
 fn advanced_layout_keeps_slider_and_hides_legacy_panels() {
-    let source = include_str!("../ui/launcher.slint");
+    let source = include_str!("../ui/launcher.slint").replace("\r\n", "\n"); // a Windows checkout may convert line endings
+    let source = source.as_str();
     assert!(source.contains("FpsSlider { width: 320px; value <=> root.fps-limit"));
     for title in ["GAMESCOPE (OPTIONAL)", "MANUAL OVERRIDES", "CHECKS"] {
         assert!(source.contains(&format!("if false : Card {{\n                        title: @tr(\"{title}\")")));
@@ -751,4 +783,342 @@ fn setup_checkboxes_and_links_work_before_the_install_button_on_the_first_click(
     click(&ui, 175.0, 343.0);
     click(&ui, 395.0, 263.0);
     assert!(!ui.get_setup_consents_ready());
+}
+
+#[test]
+fn on_windows_only_the_download_consent_is_needed_because_no_microsoft_software_is_downloaded() {
+    let ui = fresh();
+    ui.set_windows(true);
+    ui.set_install_mode(true);
+    assert!(!ui.get_setup_consents_ready());
+    ui.set_install_consent(true);
+    assert!(ui.get_setup_consents_ready(), "the hidden Microsoft consent must not block the Windows setup");
+    // an existing installation that the original patcher only has to check: nothing is downloaded by the launcher, so no download consent is asked
+    ui.set_install_consent(false);
+    ui.set_install_state_kind(1);
+    assert!(ui.get_setup_consents_ready());
+    ui.set_install_state_kind(0);
+    ui.set_install_consent(true);
+    ui.set_windows(false);
+    assert!(!ui.get_setup_consents_ready(), "Linux still needs both consents");
+}
+
+/// First start on Windows: exactly three ways to set the game up, each reachable, each acting once on its own callback.
+#[test]
+fn the_first_start_on_windows_offers_exactly_three_choices() {
+    fn window() -> MainWindow {
+        let ui = fresh();
+        ui.set_windows(true);
+        ui.set_install_mode(true);
+        ui.set_first_run(true);
+        ui.set_install_consent(true);
+        ui
+    }
+    // which callback fires where: scan the main view
+    let ui = window();
+    let (play, browse, adopt, other) = (Rc::new(Cell::new(0u32)), Rc::new(Cell::new(0u32)), Rc::new(Cell::new(0u32)), Rc::new(Cell::new(0u32)));
+    let (p, b, a, o1, o2, o3) = (play.clone(), browse.clone(), adopt.clone(), other.clone(), other.clone(), other.clone());
+    ui.on_play(move || p.set(p.get() + 1));
+    ui.on_install_browse(move || b.set(b.get() + 1));
+    ui.on_install_adopt_browse(move || a.set(a.get() + 1));
+    ui.on_install_action(move || o1.set(o1.get() + 1));
+    ui.on_install_patcher(move || o2.set(o2.get() + 1));
+    ui.on_install_cancel(move || o3.set(o3.get() + 1));
+    let mut seen = std::collections::BTreeSet::new();
+    for y in (60..HEIGHT).step_by(6) {
+        for x in (200..800.min(WIDTH)).step_by(8) {
+            let before = (play.get(), browse.get(), adopt.get());
+            click(&ui, x as f32, y as f32);
+            let after = (play.get(), browse.get(), adopt.get());
+            if after.0 > before.0 {
+                seen.insert("download");
+            }
+            if after.1 > before.1 {
+                seen.insert("disk");
+            }
+            if after.2 > before.2 {
+                seen.insert("existing");
+            }
+        }
+    }
+    assert_eq!(seen.into_iter().collect::<Vec<_>>(), ["disk", "download", "existing"], "all three choices must be reachable");
+    assert_eq!(other.get(), 0, "nothing else is offered in this view");
+    // once the user is past this view (an installer was chosen, something runs) the normal main button returns
+    let ui = window();
+    ui.set_first_run(false);
+    let (b, a) = (Rc::new(Cell::new(0u32)), Rc::new(Cell::new(0u32)));
+    let (b2, a2) = (b.clone(), a.clone());
+    ui.on_install_browse(move || b2.set(b2.get() + 1));
+    ui.on_install_adopt_browse(move || a2.set(a2.get() + 1));
+    for y in (60..HEIGHT).step_by(6) {
+        for x in (200..800.min(WIDTH)).step_by(8) {
+            click(&ui, x as f32, y as f32);
+        }
+    }
+    assert_eq!((b.get(), a.get()), (0, 0), "the three choices are only offered on the first start");
+}
+
+/// Not a regression test: with `TSW_GUI_SNAPSHOTS=<dir>` it renders the Windows main view in its situations (first start, installation found, several
+/// installations) to PPM files for a visual review. Without the variable it does nothing.
+#[test]
+fn render_windows_snapshots_for_visual_review_when_asked() {
+    let Ok(dir) = std::env::var("TSW_GUI_SNAPSHOTS") else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+    let ui = fresh();
+    let adapter = SNAP_ADAPTER.with(|a| a.borrow().clone()).expect("adapter");
+    let dump = |ui: &MainWindow, name: &str| {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        slint::platform::update_timers_and_animations();
+        ui.window().request_redraw();
+        let (w, h) = (WIDTH as usize, HEIGHT as usize);
+        let mut buf = vec![slint::Rgb8Pixel::default(); w * h];
+        adapter.draw_if_needed(|r| {
+            r.render(&mut buf, w);
+        });
+        let mut out = format!(
+            "P6
+{w} {h}
+255
+"
+        )
+        .into_bytes();
+        for p in &buf {
+            out.extend([p.r, p.g, p.b]);
+        }
+        std::fs::write(format!("{dir}/{name}.ppm"), out).unwrap();
+    };
+    ui.set_windows(true);
+    ui.set_install_mode(true);
+    ui.set_can_play(false);
+    ui.set_status_text("Bereit.".into());
+    for (code, idx) in [("en", 1), ("de", 2)] {
+        ui.invoke_language_selected(idx);
+        // first start: nothing installed
+        ui.set_first_run(true);
+        ui.set_install_location(r"C:\Program Files (x86)\Funcom\The Secret World".into());
+        ui.set_install_state(crate::i18n::Catalog::new(code).render(&crate::i18n::Msg::plain("Not installed.")).into());
+        ui.set_install_state_kind(0);
+        dump(&ui, &format!("win-first-run-{code}"));
+        // an installation was found but is not confirmed complete
+        ui.set_first_run(false);
+        ui.set_install_location(r"C:\Games\The Secret World".into());
+        ui.set_install_state(crate::i18n::Catalog::new(code).render(&crate::i18n::Msg::plain("Installation found, but not confirmed complete. The original patcher has to check it.")).into());
+        ui.set_install_state_kind(1);
+        ui.set_install_main_label(if code == "de" { "INSTALLATION PRÜFEN".into() } else { "VERIFY INSTALLATION".into() });
+        ui.set_install_consent(true);
+        dump(&ui, &format!("win-found-{code}"));
+        // several installations
+        ui.set_detected_installs(slint::ModelRc::new(slint::VecModel::from(vec![r"C:\Games\The Secret World\TheSecretWorldDX11.exe".into(), r"D:\Spiele\TSW\TheSecretWorldDX11.exe".into()])));
+        dump(&ui, &format!("win-several-{code}"));
+        ui.set_detected_installs(slint::ModelRc::default());
+        // the advanced view with the new-copy action and a remembered ignored installation
+        ui.set_ignored_text(r"Ignorierte vorhandene Installation: C:\Games\The Secret World".into());
+        ui.set_advanced(true);
+        dump(&ui, &format!("win-advanced-{code}"));
+        ui.set_advanced(false);
+        ui.set_ignored_text("".into());
+        // a game that is ready to play, but Direct3D libraries are missing
+        ui.set_install_mode(false);
+        ui.set_can_play(true);
+        ui.set_directx_text("Diese Direct3D-Bibliotheken der Microsoft DirectX End-User Runtimes (Juni 2010) fehlen auf diesem Computer: d3dx9_43.dll, d3dx11_43.dll. Das Originalspiel braucht sie in der 32-Bit-Form; ohne sie startet es eventuell nicht oder zeigt Fehler.".into());
+        dump(&ui, &format!("win-directx-{code}"));
+        ui.set_directx_text("".into());
+        ui.set_install_mode(true);
+    }
+}
+
+/// Missing Direct3D libraries on Windows: the window says so, offers exactly two actions, each acting once, and hides the block in the first-run view.
+#[test]
+fn missing_directx_libraries_are_explained_and_offer_install_and_recheck() {
+    let ui = fresh();
+    ui.set_windows(true);
+    ui.set_status_text("Bereit.".into());
+    ui.set_directx_text("Diese Direct3D-Bibliotheken fehlen: d3dx9_43.dll".into());
+    let (install, recheck, other) = (Rc::new(Cell::new(0u32)), Rc::new(Cell::new(0u32)), Rc::new(Cell::new(0u32)));
+    let (i, r, o) = (install.clone(), recheck.clone(), other.clone());
+    ui.on_install_directx(move || i.set(i.get() + 1));
+    ui.on_recheck_directx(move || r.set(r.get() + 1));
+    ui.on_play(move || o.set(o.get() + 1));
+    let mut seen = std::collections::BTreeSet::new();
+    for y in (60..HEIGHT).step_by(6) {
+        for x in (200..800.min(WIDTH)).step_by(8) {
+            let before = (install.get(), recheck.get());
+            click(&ui, x as f32, y as f32);
+            if install.get() > before.0 {
+                seen.insert("install");
+            }
+            if recheck.get() > before.1 {
+                seen.insert("recheck");
+            }
+        }
+    }
+    assert_eq!(seen.into_iter().collect::<Vec<_>>(), ["install", "recheck"], "both actions must be reachable");
+    // nothing missing: no block, so neither action can be reached
+    let ui = fresh();
+    ui.set_windows(true);
+    ui.set_directx_text("".into());
+    let n = Rc::new(Cell::new(0u32));
+    let (a, b) = (n.clone(), n.clone());
+    ui.on_install_directx(move || a.set(a.get() + 1));
+    ui.on_recheck_directx(move || b.set(b.get() + 1));
+    for y in (60..HEIGHT).step_by(6) {
+        for x in (200..800.min(WIDTH)).step_by(8) {
+            click(&ui, x as f32, y as f32);
+        }
+    }
+    assert_eq!(n.get(), 0, "no DirectX block while nothing is missing");
+    // first start (game not installed yet): the Funcom installer comes first, so the block is not shown
+    let ui = fresh();
+    ui.set_windows(true);
+    ui.set_install_mode(true);
+    ui.set_first_run(true);
+    ui.set_directx_text("fehlt".into());
+    let n = Rc::new(Cell::new(0u32));
+    let (a, b) = (n.clone(), n.clone());
+    ui.on_install_directx(move || a.set(a.get() + 1));
+    ui.on_recheck_directx(move || b.set(b.get() + 1));
+    for y in (60..HEIGHT).step_by(6) {
+        for x in (200..800.min(WIDTH)).step_by(8) {
+            click(&ui, x as f32, y as f32);
+        }
+    }
+    assert_eq!(n.get(), 0, "the first-run view stays free of the DirectX block");
+}
+
+/// "Install a new copy in another folder": an existing installation is ignored (never touched), the chosen empty folder is remembered, the window offers the
+/// first-run choices again and the stored client path of the old installation is forgotten; an unsuitable folder changes nothing; the decision can be undone.
+#[cfg(windows)] // Windows paths (the folder rules know drive letters)
+#[test]
+fn a_new_copy_in_another_folder_ignores_the_existing_installation_without_touching_it() {
+    use tsw_launch::install;
+    let _serial = GLOBAL_SEARCH.lock().unwrap_or_else(|e| e.into_inner());
+    let _reset = ResetUserSearch;
+    let (ui, state, _may_close, config_path) = wired("newcopy");
+    // the installation state of this test goes next to the test's own configuration, never into the real settings
+    let state_file = config_path.parent().unwrap().join("install-state");
+    let root = std::env::temp_dir().join(format!("tsw-newcopy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let old = root.join("Games").join("The Secret World");
+    std::fs::create_dir_all(old.join("RDB")).unwrap();
+    let old_exe = old.join("TheSecretWorldDX11.exe");
+    std::fs::write(&old_exe, b"MZ").unwrap();
+    std::fs::write(old.join("RDB").join("RDBHashIndex.bin"), b"x").unwrap();
+    let before = (std::fs::metadata(&old_exe).unwrap().modified().unwrap(), std::fs::read_dir(&old).unwrap().count());
+    let new = root.join("Neu");
+    ui.set_install_base(root.join("base").display().to_string().into());
+    {
+        let mut st = state.lock().unwrap();
+        st.config.client_exe = Some(old_exe.clone());
+        st.install.client_exe = Some(old_exe.clone());
+        // an unsuitable folder (inside the old installation) is refused and changes nothing
+        crate::start_new_copy(&ui, &state, &mut st, old.join("RDB"));
+        assert!(st.install.ignored.is_empty() && st.install.target.is_none(), "nothing was decided");
+        assert!(st.config.client_exe.is_some(), "the configuration is unchanged");
+        assert!(st.view.message.is_some());
+        // a suitable folder
+        std::fs::create_dir_all(&new).unwrap();
+        crate::start_new_copy(&ui, &state, &mut st, new.clone());
+        assert_eq!(st.install.target.as_deref(), Some(new.as_path()));
+        assert!(st.install.ignored.iter().any(|d| tsw_launch::winnative::overlaps(d, &old)), "the old installation is ignored: {:?}", st.install.ignored);
+        assert!(st.config.client_exe.is_none() && st.install.client_exe.is_none(), "a stored choice inside the old installation is forgotten");
+        assert!(!std::fs::read_to_string(&config_path).unwrap_or_default().contains("client_exe"), "and removed from the saved configuration");
+        assert!(install::find_installation(&install::Layout { base: root.join("base") }, &st.install).is_none_or(|f| !f.client.starts_with(&old)), "the launcher no longer finds the old installation");
+        crate::refresh_install(&ui, &state, &mut st);
+        assert!(st.view.first_run, "the first-run choices are offered again");
+        assert_eq!(st.view.location, new.display().to_string(), "the new folder is shown");
+        assert!(st.view.ignored.iter().any(|d| tsw_launch::winnative::overlaps(d, &old)));
+    }
+    // the old installation was never touched
+    assert_eq!((std::fs::metadata(&old_exe).unwrap().modified().unwrap(), std::fs::read_dir(&old).unwrap().count()), before);
+    assert!(old.join("RDB").join("RDBHashIndex.bin").is_file());
+    // the decision is saved with the installation state and can be taken back
+    let saved = std::fs::read_to_string(&state_file).unwrap();
+    assert!(saved.contains("ignored_install = ") && saved.contains("install_target = "), "{saved}");
+    ui.invoke_use_ignored_again();
+    {
+        let st = state.lock().unwrap();
+        assert!(st.install.ignored.is_empty() && st.install.target.is_none());
+        assert!(!std::fs::read_to_string(&state_file).unwrap().contains("ignored_install"));
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The windows offers the new-copy action: as a link in the main view while an installation is found but not confirmed, and always in the advanced view.
+#[test]
+fn the_new_copy_action_is_reachable_on_windows_only() {
+    let reach = |windows: bool, kind: i32, first_run: bool, advanced: bool| -> u32 {
+        let ui = fresh();
+        ui.set_windows(windows);
+        ui.set_install_mode(true);
+        ui.set_first_run(first_run);
+        ui.set_install_state_kind(kind);
+        ui.set_advanced(advanced);
+        let n = Rc::new(Cell::new(0u32));
+        let c = n.clone();
+        ui.on_install_new_copy(move || c.set(c.get() + 1));
+        // below the title bar (the gear opens the advanced view) and away from the window edges
+        for y in (60..HEIGHT).step_by(4) {
+            for x in (120..800.min(WIDTH)).step_by(40) {
+                click(&ui, x as f32, y as f32);
+            }
+        }
+        n.get()
+    };
+    assert!(reach(true, 1, false, false) > 0, "main view, installation found but not confirmed");
+    assert_eq!(reach(true, 0, true, false), 0, "no link in the first-run view (the three choices are the way there)");
+    assert_eq!(reach(false, 1, false, false), 0, "never on Linux");
+    assert!(reach(true, 0, false, true) > 0, "advanced view");
+    assert_eq!(reach(false, 0, false, true), 0, "never on Linux");
+}
+
+/// The automatic detection is paused on Windows: at the normal start nothing is found - not through a stored path of an old configuration - and the first-run
+/// choices appear at once. Choosing an installation by hand still works and from then on the stored path counts.
+#[cfg(windows)]
+#[test]
+fn with_the_detection_paused_an_old_stored_path_is_not_taken_and_a_manual_choice_still_works() {
+    use tsw_launch::install;
+    let _serial = GLOBAL_SEARCH.lock().unwrap_or_else(|e| e.into_inner());
+    let _reset = ResetUserSearch;
+    let (ui, state, _may_close, _config_path) = wired("paused");
+    let root = std::env::temp_dir().join(format!("tsw-paused-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let old = root.join("Games").join("The Secret World");
+    std::fs::create_dir_all(old.join("RDB")).unwrap();
+    let exe = old.join("TheSecretWorldDX11.exe");
+    std::fs::write(&exe, b"MZ").unwrap();
+    std::fs::write(old.join("RDB").join("RDBHashIndex.bin"), b"x").unwrap();
+    ui.set_install_base(root.join("base").display().to_string().into());
+    ui.set_windows(true);
+    let before = std::fs::metadata(&exe).unwrap().modified().unwrap();
+    {
+        let mut st = state.lock().unwrap();
+        // an old configuration and an old installation state that name the existing installation (not chosen by the user)
+        st.config.client_exe = Some(exe.clone());
+        st.install.client_exe = Some(exe.clone());
+        st.install.apply_search(); // what the program does at start
+        assert!(tsw_launch::winnative::autodetect_paused() && !tsw_launch::winnative::stored_paths_honored());
+        crate::refresh_install(&ui, &state, &mut st);
+        assert!(st.view.first_run && st.view.needs_install, "the first-run choices appear at once");
+        assert!(st.view.detected.is_empty(), "nothing is listed as found");
+        assert!(!crate::config_names_client(&st), "the old configuration does not name a client");
+        assert!(install::find_installation(&install::Layout { base: root.join("base") }, &st.install).is_none(), "and nothing is detected");
+        // the user chooses the installation by hand: it works, and the stored path counts from then on
+        let adopted = install::adopt(&old).unwrap();
+        st.install.client_exe = Some(adopted.clone());
+        crate::adopt_into_config(&ui, &state, &mut st, install::Adoption { client_exe: adopted, prefix: None });
+        assert!(st.install.choice_made && tsw_launch::winnative::stored_paths_honored());
+        assert_eq!(st.config.client_exe.as_deref(), Some(exe.as_path()), "a stale stored path did not block the real choice");
+        crate::refresh_install(&ui, &state, &mut st);
+        assert!(!st.view.needs_install && !st.view.first_run, "after the manual choice the installation is used");
+        // the decision survives a restart of the program (it is part of the installation state)
+        let text = st.install.to_text();
+        assert!(text.contains("choice_made = yes"));
+        let reloaded = install::State::parse(&text).unwrap();
+        reloaded.apply_search();
+        assert!(tsw_launch::winnative::stored_paths_honored());
+    }
+    assert_eq!(std::fs::metadata(&exe).unwrap().modified().unwrap(), before, "the installation itself was never touched");
+    let _ = std::fs::remove_dir_all(&root);
 }

@@ -4226,7 +4226,7 @@ dependencies = [
 
 [[package]]
 name = "tsw-launch"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "tsw-patch",
  "x11rb",
@@ -4234,7 +4234,7 @@ dependencies = [
 
 [[package]]
 name = "tsw-launcher-gui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "futures-lite",
  "slint",

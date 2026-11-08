@@ -1,0 +1,110 @@
+# Combined multi-platform release SET of ONE version from ONE commit: Linux Flatpak + source archive (rc-artifacts.yml), Windows installer
+# (windows.yml) and a single SHA256SUMS. Everything is built from the same checked-out commit of this run; the assemble job refuses a set whose parts do not
+# carry the same version and commit, whose files are missing or whose checksums do not match. Started by hand (no inputs) or called by release.yml. It creates NO GitHub release, NO
+# tag, NO commit, has no secrets and no write permission: the result is a workflow artifact. A failed Linux OR Windows build fails the run - there is never a
+# set that looks complete without the Windows part. Publication (public repository, release page) stays the owner's separate step.
+name: release-set
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      artifact:
+        description: "Name of the workflow artifact that holds the verified combined release set"
+        value: ${{ jobs.assemble.outputs.artifact }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-set-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+    uses: ./.github/workflows/rc-artifacts.yml
+    permissions:
+      contents: read
+
+  windows:
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+    uses: ./.github/workflows/windows.yml
+    permissions:
+      contents: read
+
+  assemble:
+    needs: [linux, windows]
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      artifact: ${{ steps.version.outputs.artifact }}
+    steps:
+      - name: Both platform builds must have succeeded
+        run: |
+          [ "${{ needs.linux.result }}" = success ] && [ "${{ needs.windows.result }}" = success ] || { echo "linux=${{ needs.linux.result }} windows=${{ needs.windows.result }}: no combined set" >&2; exit 1; }
+
+      - name: Check out the repository (read-only token, no stored credentials, full history for the main check)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Refuse a commit that is not part of main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_SHA is not on main: sets are assembled from main or from a tag on main only" >&2; exit 1; }
+
+      - name: Read and check the version; a tag must be v<APP_VERSION>
+        id: version
+        run: |
+          python3 scripts/version.py check
+          version="$(python3 scripts/version.py show)"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match APP_VERSION $version (expected v$version)" >&2; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifact=tsw-forever-$version-release-all-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Download the Linux part (same version, same commit)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.linux.outputs.artifact }}
+          path: parts/linux
+
+      - name: Download the Windows part (same version, same commit)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.windows.outputs.artifact }}
+          path: parts/windows
+
+      - name: Assemble the combined set and verify it
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          case "${{ needs.linux.outputs.artifact }}" in *"-$v-"*"-$GITHUB_SHA") ;; *) echo "Linux artifact name does not carry version $v and commit $GITHUB_SHA" >&2; exit 1;; esac
+          case "${{ needs.windows.outputs.artifact }}" in *"-$v-"*"-$GITHUB_SHA") ;; *) echo "Windows artifact name does not carry version $v and commit $GITHUB_SHA" >&2; exit 1;; esac
+          # each part must be internally consistent before it is merged
+          (cd parts/linux && sha256sum -c SHA256SUMS)
+          (cd parts/windows && sha256sum -c SHA256SUMS-windows)
+          set=build/release-set
+          mkdir -p "$set"
+          cp "parts/linux/tsw-forever-$v.flatpak" "parts/linux/tsw-forever-$v-src.tar.gz" "$set/"
+          cp "parts/windows/tsw-forever-$v-windows-setup.exe" "$set/"
+          (cd "$set" && sha256sum "tsw-forever-$v.flatpak" "tsw-forever-$v-src.tar.gz" "tsw-forever-$v-windows-setup.exe" > SHA256SUMS && cat SHA256SUMS)
+          python3 -I scripts/check_release_set.py "$set" --version "$v" --with-windows
+          python3 -I scripts/check_public_source.py "$set/tsw-forever-$v-src.tar.gz"
+          python3 -I scripts/check_release_artifacts.py "$set/tsw-forever-$v-src.tar.gz"
+          # the source archive must be the one that produced these binaries: its project.conf and the commit of this run are the same version
+          tar xzOf "$set/tsw-forever-$v-src.tar.gz" "tsw-forever-$v/packaging/project.conf" | grep -qx "APP_VERSION=$v"
+          echo "commit: $GITHUB_SHA" > "$set/BUILD-INFO.txt"
+          echo "version: $v" >> "$set/BUILD-INFO.txt"
+
+      - name: Upload the combined release set as one workflow artifact (no release is created; kept 30 days)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.version.outputs.artifact }}
+          path: build/release-set/
+          if-no-files-found: error
+          retention-days: 30

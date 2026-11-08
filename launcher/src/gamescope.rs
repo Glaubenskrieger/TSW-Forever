@@ -5,7 +5,7 @@
 //! `gamescope_output`), so the picture is not scaled and the user interface keeps its normal size.
 //!
 //! FSR/upscaling was removed on purpose (decision of the owner, 2026-10-31): Gamescope's FSR scales the finished picture - 3D, menus, text and HUD alike -
-//! so everything looks larger (measured: UI factor = output / render resolution, the original development measurements). Old configuration
+//! so everything looks larger (measured: UI factor = output / render resolution, documentation/architecture.md). Old configuration
 //! keys (`fsr`, `fsr_internal`, `fsr_output`, `fsr_sharpness`) are still read and ignored ([`crate::config`]).
 //!
 //! Everything here is pure (command lines are argument vectors, never shell text), so it is testable without Gamescope being installed.
@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use crate::doctor::{Finding, Level};
 
 /// Where the Gamescope Vulkan-layer extension of the Freedesktop runtime mounts its binary inside a Flatpak sandbox.
-/// UNVERIFIED on a real Flatpak build (see the Flatpak manifest).
+/// UNVERIFIED on a real Flatpak build (see documentation/packaging.md).
 pub const FLATPAK_EXTENSION_BIN: &str = "/usr/lib/extensions/vulkan/gamescope/bin/gamescope";
 
 /// A resolved plan: the one resolution that is used inside and outside.

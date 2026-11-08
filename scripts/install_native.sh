@@ -1,5 +1,5 @@
 #!/bin/sh
-# The install step of a build FROM SOURCE (see README.md): copies the two programs, the desktop entry, the AppStream metadata, the icons
+# The install step of a build FROM SOURCE (documentation/building-from-source.md): copies the two programs, the desktop entry, the AppStream metadata, the icons
 # and the licence texts below DESTDIR. It does not build anything and touches nothing outside DESTDIR. (The official binary format is the Flatpak.)
 #
 #   install_native.sh <source-root> <bin-dir> <DESTDIR> [--prefix /usr] [--licence-dir DIR] [--doc-dir DIR]
@@ -40,3 +40,4 @@ mkdir -p "$dest$licdir/LICENSES"
 cp -R "$src/LICENSES/." "$dest$licdir/LICENSES/"
 install -Dm644 "$src/README.md" "$dest$docdir/README.md"
 [ ! -f "$src/CHANGELOG.md" ] || install -Dm644 "$src/CHANGELOG.md" "$dest$docdir/CHANGELOG.md"
+[ ! -f "$src/documentation/building-from-source.md" ] || install -Dm644 "$src/documentation/building-from-source.md" "$dest$docdir/building-from-source.md"

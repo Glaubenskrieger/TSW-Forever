@@ -375,11 +375,31 @@ export component MainWindow inherits Window {
     in-out property <bool> install-consent;
     in-out property <bool> microsoft-consent;
     callback microsoft-terms-link(int);
-    out property <bool> setup-consents-ready: root.install-consent && root.microsoft-consent;
+    // Windows downloads no Microsoft software, so only the download consent applies there - and none while an installation that exists is merely checked by the
+    // original patcher (state kind 1): nothing is downloaded by the launcher in that situation
+    out property <bool> setup-consents-ready: root.windows ? (root.install-consent || root.install-state-kind == 1) : (root.install-consent && root.microsoft-consent);
     in-out property <bool> install-unverified;
     in-out property <string> install-import-path;
     // main view: no usable installation yet -> the big button installs (or continues the installation)
     in property <bool> install-mode;
+    // Windows, nothing installed yet and nothing chosen: the main view offers exactly the three ways to set the game up
+    in property <bool> first-run;
+    // Windows main view: the state of the game installation in words (0 neutral, 1 needs attention), and every installation found on this computer
+    in property <string> install-state;
+    // Windows: Direct3D libraries of Microsoft's DirectX June 2010 runtime are missing (empty text = nothing missing)
+    in property <string> directx-text;
+    // Windows: install a NEW copy in another folder although an installation exists; and take that decision back
+    in property <string> ignored-text;
+    callback install-new-copy();
+    callback use-ignored-again();
+    callback install-directx();
+    callback recheck-directx();
+    in property <int> install-state-kind;
+    in property <[string]> detected-installs;
+    in-out property <int> detected-index;
+    callback use-detected(int);
+    // true on native Windows: Wine, Proton, DXVK and Microsoft-component options do not exist there and are not shown
+    in property <bool> windows;
     in property <string> install-location;
     in property <string> install-main-label;
     in property <string> install-notice;
@@ -466,7 +486,7 @@ export component MainWindow inherits Window {
             padding: 36px;
             padding-top: 56px;
             spacing: 0px;
-            alignment: center;
+            alignment: (root.install-mode && root.windows) ? start : center;
 
             Text {
                 text: "T H E   S E C R E T   W O R L D";
@@ -491,9 +511,24 @@ export component MainWindow inherits Window {
             Rectangle { height: root.install-mode ? 24px : 64px; }
             if root.install-mode : VerticalLayout {
                 spacing: 10px;
-                Text { text: @tr("Installation folder"); horizontal-alignment: center; color: Theme.faint; font-size: Theme.fs-caption; }
+                Text { text: root.windows ? @tr("Game folder") : @tr("Installation folder"); horizontal-alignment: center; color: Theme.faint; font-size: Theme.fs-caption; }
                 Text { text: root.install-location; horizontal-alignment: center; color: Theme.dim; font-size: Theme.fs-small; overflow: elide; }
-                HorizontalLayout {
+                if root.windows && root.install-state != "" : Text { text: root.install-state; horizontal-alignment: center; wrap: word-wrap; color: root.install-state-kind == 1 ? Theme.warn : Theme.dim; font-size: Theme.fs-small; }
+                if root.windows && root.install-state-kind == 1 && !root.first-run : HorizontalLayout {
+                    alignment: center;
+                    TextLink { label: @tr("Install a new copy in another folder instead …"); enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.install-new-copy(); } }
+                }
+                if root.windows && root.detected-installs.length > 1 : VerticalLayout {
+                    spacing: 8px;
+                    Text { text: @tr("Several installations were found. Choose the one to use:"); horizontal-alignment: center; wrap: word-wrap; color: Theme.dim; font-size: Theme.fs-caption; }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 12px;
+                        ComboBox { model: root.detected-installs; current-index <=> root.detected-index; enabled: !root.busy && !root.running && !root.confirm-exit; width: 460px; }
+                        Btn { label: @tr("Use this installation"); min-width: 180px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.use-detected(root.detected-index); } }
+                    }
+                }
+                if !(root.windows && (root.first-run || root.install-state-kind == 1)) : HorizontalLayout {
                     alignment: center;
                     QuietCheck {
                         label: @tr("I agree to the downloads");
@@ -503,22 +538,84 @@ export component MainWindow inherits Window {
                     }
                 }
                 if root.install-hint != "" : Text { text: root.install-hint; horizontal-alignment: center; color: Theme.warn; font-size: Theme.fs-caption; wrap: word-wrap; }
-                Text { text: @tr("Original installer from Funcom, the Wine/Proton runtime (GE-Proton) from GitHub and Microsoft's Direct3D components, about 700 MB. Everything is verified by checksum; nothing is installed outside the installation folder."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
-                QuietCheck {
-                    label: @tr("I accept the Microsoft SDK/runtime terms for local component installation");
-                    enabled: !root.busy && !root.confirm-exit;
-                    checked <=> root.microsoft-consent;
+                if !root.windows : Text { text: @tr("Original installer from Funcom, the Wine/Proton runtime (GE-Proton) from GitHub and Microsoft's Direct3D components, about 700 MB. Everything is verified by checksum; nothing is installed outside the installation folder."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
+                if root.windows && !root.first-run && root.install-state-kind != 1 : Text { text: @tr("Only the original installer from Funcom (about 33 MB) is downloaded, from the official address, and verified by checksum. The launcher downloads no Microsoft software on Windows."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
+                if !root.windows : VerticalLayout {
+                    spacing: 10px;
+                    QuietCheck {
+                        label: @tr("I accept the Microsoft SDK/runtime terms for local component installation");
+                        enabled: !root.busy && !root.confirm-exit;
+                        checked <=> root.microsoft-consent;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 12px;
+                        TextLink { label: @tr("SDK terms (online copy)"); enabled: !root.confirm-exit; clicked => { root.microsoft-terms-link(0); } }
+                        TextLink { label: @tr("Runtime terms (Microsoft section)"); enabled: !root.confirm-exit; clicked => { root.microsoft-terms-link(1); } }
+                    }
+                    Text { text: @tr("Read the linked Microsoft terms before accepting. The links are online copies; the runtime page also contains unrelated product terms. Both consents are required before installing."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
                 }
+            }
+            Rectangle { height: root.install-mode ? 20px : 0px; }
+            if root.windows && root.install-mode && root.install-import-path != "" : VerticalLayout {
+                spacing: 8px;
+                Text { text: root.install-import-path; horizontal-alignment: center; color: Theme.dim; font-size: Theme.fs-caption; overflow: elide; }
+                HorizontalLayout {
+                    alignment: center;
+                    QuietCheck { enabled: !root.busy && !root.confirm-exit; label: @tr("I checked this installer file; allow exactly this file (its fingerprint) to run"); checked <=> root.install-unverified; toggled => { root.install-base-edited(); } }
+                }
+            }
+            if root.windows && root.directx-text != "" && !root.first-run : VerticalLayout {
+                spacing: 8px;
+                Rectangle { height: 4px; }
+                Text { text: root.directx-text; horizontal-alignment: center; wrap: word-wrap; color: Theme.warn; font-size: Theme.fs-small; }
+                Text { text: @tr("The button downloads Microsoft's own installer from download.microsoft.com, checks its Microsoft signature and starts it. Microsoft's installer shows its own terms; Windows may ask for permission. Nothing is installed without your click."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
                 HorizontalLayout {
                     alignment: center;
                     spacing: 12px;
-                    TextLink { label: @tr("SDK terms (online copy)"); enabled: !root.confirm-exit; clicked => { root.microsoft-terms-link(0); } }
-                    TextLink { label: @tr("Runtime terms (Microsoft section)"); enabled: !root.confirm-exit; clicked => { root.microsoft-terms-link(1); } }
+                    Btn { label: @tr("Install DirectX components …"); min-width: 240px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.install-directx(); } }
+                    Btn { label: @tr("Check again"); min-width: 150px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.recheck-directx(); } }
                 }
-                Text { text: @tr("Read the linked Microsoft terms before accepting. The links are online copies; the runtime page also contains unrelated product terms. Both consents are required before installing."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
+                Rectangle { height: 4px; }
             }
-            Rectangle { height: root.install-mode ? 20px : 0px; }
-            HorizontalLayout {
+            if root.windows && root.install-mode && root.first-run : VerticalLayout {
+                spacing: 10px;
+                alignment: center;
+                Text { text: @tr("Set up The Secret World"); horizontal-alignment: center; color: Theme.text; font-family: Theme.serif; font-size: Theme.fs-heading; }
+                Text { text: @tr("Choose how the game gets onto this computer. An existing installation is never changed."); horizontal-alignment: center; wrap: word-wrap; color: Theme.dim; font-size: Theme.fs-small; }
+                HorizontalLayout {
+                    alignment: center;
+                    Btn {
+                        label: @tr("Download installer and go");
+                        min-width: 300px;
+                        enabled: root.setup-consents-ready && !root.install-waiting && !root.busy && !root.running && !root.confirm-exit;
+                        clicked => { root.play(); }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    QuietCheck {
+                        label: @tr("I agree to the downloads");
+                        enabled: !root.busy && !root.confirm-exit;
+                        checked <=> root.install-consent;
+                        toggled => { root.install-base-edited(); }
+                    }
+                }
+                Text { text: @tr("The official Funcom installer is downloaded, checked and started."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
+                Rectangle { height: 6px; }
+                HorizontalLayout {
+                    alignment: center;
+                    Btn { label: @tr("Provide the installer from disk"); min-width: 300px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.install-browse(); } }
+                }
+                Text { text: @tr("Select an original Funcom installer file you already have."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
+                Rectangle { height: 6px; }
+                HorizontalLayout {
+                    alignment: center;
+                    Btn { label: @tr("Use an existing TSW installation"); min-width: 300px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.install-adopt-browse(); } }
+                }
+                Text { text: @tr("Select the folder of a game installation that already exists."); horizontal-alignment: center; wrap: word-wrap; color: Theme.faint; font-size: Theme.fs-caption; }
+            }
+            if !(root.windows && root.install-mode && root.first-run) : HorizontalLayout {
                 alignment: center;
                 PlayButton {
                     label: root.play-label;
@@ -538,8 +635,9 @@ export component MainWindow inherits Window {
                         toggled => { root.settings-changed(); }
                     }
                 }
-                Rectangle { height: 10px; }
-                Text { text: root.fps-label; horizontal-alignment: center; color: Theme.faint; font-size: Theme.fs-caption; }
+                // the frame-rate limit exists only with Wine/DXVK: on Windows nothing about it is shown
+                if !root.windows : Rectangle { height: 10px; }
+                if !root.windows : Text { text: root.fps-label; horizontal-alignment: center; color: Theme.faint; font-size: Theme.fs-caption; }
             }
             Rectangle { height: 28px; }
             VerticalLayout {
@@ -600,6 +698,16 @@ export component MainWindow inherits Window {
                         Text { text: root.install-status; color: Theme.text; font-size: Theme.fs-small; wrap: word-wrap; }
                         Text { text: root.install-location; color: Theme.dim; font-size: Theme.fs-caption; overflow: elide; }
                         if root.install-notice != "" : Text { text: root.install-notice; color: Theme.warn; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        if root.windows : HorizontalLayout {
+                            spacing: 12px;
+                            Btn { label: @tr("Install a new copy in another folder …"); min-width: 320px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.install-new-copy(); } }
+                        }
+                        if root.windows : Text { text: @tr("Use this when a game installation exists but you want a completely new one in another folder. The existing installation stays untouched and is ignored from then on; the original installer is started with the new folder."); color: Theme.faint; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        if root.windows && root.ignored-text != "" : Text { text: root.ignored-text; color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        if root.windows && root.ignored-text != "" : HorizontalLayout {
+                            spacing: 12px;
+                            Btn { label: @tr("Use the ignored installation again"); min-width: 320px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.use-ignored-again(); } }
+                        }
                         HorizontalLayout {
                             spacing: 12px;
                             Btn { label: @tr("Start the original patcher"); min-width: 200px; enabled: !root.busy && !root.running && !root.confirm-exit; clicked => { root.install-patcher(); } }
@@ -619,8 +727,8 @@ export component MainWindow inherits Window {
                         title: @tr("DETECTED COMPONENTS");
                         accent: Theme.ok;
                         InfoRow { label: @tr("Client"); value: root.detected-client; }
-                        InfoRow { label: @tr("Wine / Proton"); value: root.detected-runtime; }
-                        InfoRow { label: @tr("Wine prefix"); value: root.detected-prefix; }
+                        if !root.windows : InfoRow { label: @tr("Wine / Proton"); value: root.detected-runtime; }
+                        if !root.windows : InfoRow { label: @tr("Wine prefix"); value: root.detected-prefix; }
                     }
 
                     Card {
@@ -668,17 +776,21 @@ export component MainWindow inherits Window {
                                 selected(value) => { root.resolution-index = self.current-index; root.resolution-selected(self.current-index); }
                             }
                         }
-                        Text { text: @tr("A selected resolution applies only to the game in a private Wine desktop. The desktop resolution stays unchanged."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        if !root.windows : Text { text: @tr("A selected resolution applies only to the game in a private Wine desktop. The desktop resolution stays unchanged."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
+                        if root.windows : Text { text: @tr("A selected resolution is written to the game's own settings and applies at the next start. Windows runs the game natively: there is no frame-rate limit or counter from the launcher."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
                         if root.resolution-legacy : Text { text: @tr("Legacy display overrides are active. Select Managed by the game to leave resolution to the game."); color: Theme.warn; font-size: Theme.fs-caption; wrap: word-wrap; }
                         if root.resolution-unavailable && !root.resolution-legacy : Text { text: @tr("The saved resolution is unavailable. Select an available mode or Managed by the game before playing."); color: Theme.warn; font-size: Theme.fs-caption; wrap: word-wrap; }
-                        Text { text: root.fps-label; color: Theme.text; font-size: Theme.fs-body; }
-                        HorizontalLayout {
-                            spacing: 18px;
-                            FpsSlider { width: 320px; value <=> root.fps-limit; enabled: !root.fps-unlimited && !root.confirm-exit; released => { root.settings-changed(); } }
-                            QuietCheck { enabled: !root.confirm-exit; label: @tr("Unlimited"); checked <=> root.fps-unlimited; toggled => { root.settings-changed(); } }
+                        if !root.windows : VerticalLayout {
+                            spacing: 8px;
+                            Text { text: root.fps-label; color: Theme.text; font-size: Theme.fs-body; }
+                            HorizontalLayout {
+                                spacing: 18px;
+                                FpsSlider { width: 320px; value <=> root.fps-limit; enabled: !root.fps-unlimited && !root.confirm-exit; released => { root.settings-changed(); } }
+                                QuietCheck { enabled: !root.confirm-exit; label: @tr("Unlimited"); checked <=> root.fps-unlimited; toggled => { root.settings-changed(); } }
+                            }
+                            QuietCheck { enabled: !root.confirm-exit; label: @tr("Show the FPS counter in the game (DXVK)"); checked <=> root.fps-hud; toggled => { root.settings-changed(); } }
+                            Text { text: @tr("Default: 60 FPS. Free from 30 to 240 FPS, or unlimited. Applies at the next game start."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
                         }
-                        QuietCheck { enabled: !root.confirm-exit; label: @tr("Show the FPS counter in the game (DXVK)"); checked <=> root.fps-hud; toggled => { root.settings-changed(); } }
-                        Text { text: @tr("Default: 60 FPS. Free from 30 to 240 FPS, or unlimited. Applies at the next game start."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
                     }
 
                     // Hidden for rc.3; underlying controls, configuration and checks are retained.
@@ -689,7 +801,7 @@ export component MainWindow inherits Window {
                         Text { text: @tr("Off by default and not needed: the normal start works without gamescope. If switched on, gamescope must be installed; the picture is shown at the full screen resolution without scaling, so the user interface keeps its size. Cannot be combined with the virtual desktop."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
                     }
 
-                    Card {
+                    if !root.windows : Card {
                         title: @tr("SHADER CACHE");
                         accent: Theme.faint;
                         Text { text: root.cache-status; color: Theme.dim; font-size: Theme.fs-small; wrap: word-wrap; }
@@ -701,7 +813,7 @@ export component MainWindow inherits Window {
                         Text { text: @tr("The old cache is only set aside, never deleted; the game builds a new one at the next start."); color: Theme.dim; font-size: Theme.fs-caption; wrap: word-wrap; }
                     }
 
-                    Card {
+                    if !root.windows : Card {
                         title: @tr("COMPILER PROFILE");
                         accent: Theme.warn;
                         Text { text: root.profile-status; color: Theme.dim; font-size: Theme.fs-small; wrap: word-wrap; }

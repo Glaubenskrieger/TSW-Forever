@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! End-to-end check of the command line the CLI builds (`--dry-run` starts nothing): the normal path without Gamescope, and the optional
 //! plain Gamescope window with a stand-in `gamescope` on a private PATH. Everything lives in a temporary directory; no game, Wine or gamescope is run
 //! except the stand-in shell scripts (`gamescope --help` answers with a fixture text).

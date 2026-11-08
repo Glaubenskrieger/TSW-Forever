@@ -1,0 +1,61 @@
+# Checks for every branch and every pull request: tests, formatting, lints, secrets scan, policy checks and the static Flatpak validation.
+# It builds NO package, uploads NO artifact, publishes nothing and uses no secrets. Full distribution packages are built only by
+# flatpak.yml on main (the policy test scripts/check_flatpak_package.py ci-policy enforces this split).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FREEDESKTOP_VERSION: "25.08"
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the repository (read-only token, no stored credentials)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install check tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev
+
+      - name: Version and action pins
+        run: |
+          scripts/version.py check
+          scripts/pin_actions.sh --check
+
+      - name: Fetch the crates of the committed Cargo.lock (network step, read-only)
+        run: scripts/build_flatpak.sh fetch --allow-network
+
+      - name: Formatting
+        run: |
+          for d in patcher launcher launcher-gui; do (cd "$d" && cargo fmt --check); done
+
+      - name: Clippy (new warnings fail the check)
+        run: |
+          for d in patcher launcher launcher-gui; do (cd "$d" && cargo clippy --offline --locked --all-targets -- -D warnings); done
+
+      - name: Tests (Rust crates and Python policy tests)
+        run: scripts/build_flatpak.sh test
+
+      - name: Secrets scan of the tree
+        run: python3 -I scripts/check_secrets_in_tree.py
+
+      - name: Pre-publication check (tracked and untracked-not-ignored files; nothing forbidden may be part of the repository)
+        run: python3 -I scripts/prepublish_check.py --git
+
+      - name: Static Flatpak validation (manifest, staged sources, desktop file, metainfo; nothing is built)
+        run: scripts/build_flatpak.sh check

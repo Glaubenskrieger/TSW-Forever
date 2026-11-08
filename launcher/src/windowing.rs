@@ -8,7 +8,7 @@
 //! a second, asynchronous `WM_SIZE` after the activation: that overwrites the full-screen request with a windowed resize, the window stays tiny.
 //! Without window-manager decorations the requested size is honoured, no second `WM_SIZE` arrives and the client re-enters full screen.
 //! Measured with scripts/alttab_auto.py: 7 of 7 Alt+Tab cycles ended in the tiny window without the variable, 13 of 13 returned to full
-//! screen with it (the original development measurements).
+//! screen with it (documentation/architecture.md).
 //!
 //! **What it does.** For Wine/Proton runners the launcher sets `WINE_NO_WM_DECORATION=1` in the game's environment (a GE-Proton switch:
 //! `patches/proton/0001-win32u-add-env-switch-to-disable-wm-decorations.patch`, the same as the Wine setting `Decorated=N`). Only the

@@ -2,7 +2,7 @@
 //!
 //! Implemented: the client's start-up self-checks (`-clienthash`, `-key`), command construction and process start
 //! for Windows (native) and Linux (Wine/Proton), with secrets masked in everything that is printed.
-//! NOT implemented (see the original development measurements): patching/updating, authentication
+//! NOT implemented (see documentation/architecture.md): patching/updating, authentication
 //! (`-loginkey`/`-statindex` come from outside and are only passed through), prefix creation, compatibility fixes.
 
 pub mod config;
@@ -12,6 +12,7 @@ pub mod discover;
 pub mod display;
 pub mod doctor;
 pub mod dxredist;
+pub mod dxsetup;
 pub mod fps;
 pub mod gamescope;
 pub mod install;
@@ -32,6 +33,7 @@ pub mod selfupdate;
 pub mod sha256;
 pub mod shadercache;
 pub mod windowing;
+pub mod winnative;
 
 use std::fmt;
 use std::path::Path;
@@ -136,7 +138,7 @@ pub(crate) fn test_exec_lock() -> std::sync::MutexGuard<'static, ()> {
 
 /// A stand-in program called `name` that just sleeps: a SYMLINK to `/bin/sleep`, not a copy. `exec` through a symlink runs the real `sleep` with the stand-in's
 /// path as its command line, which is all the process lookups read, and no file is ever opened for writing, so it cannot fail with `ETXTBSY`.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn sleep_stand_in(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     let exe = dir.join(name);
     let _ = std::fs::remove_file(&exe);
@@ -149,7 +151,7 @@ pub(crate) fn sleep_stand_in(dir: &std::path::Path, name: &str) -> std::path::Pa
 /// window is tens of microseconds, but a loaded or virtual machine can preempt the child inside it for milliseconds). A test that looks for its stand-in
 /// process at once depends on that timing. This waits (bounded) until `child` is listed under `name` below `under`, so the test controls the process it
 /// observes; if the stand-in has already exited, it says so instead of waiting.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn wait_until_listed(name: &str, under: &std::path::Path, child: &mut std::process::Child) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let pid = child.id();
@@ -215,6 +217,7 @@ mod tests {
 
     /// The stand-in program must start reliably while other threads fork all the time (the situation of the parallel test run). A COPY of `sleep` fails in
     /// about one start in four here (measured); the symlink must never fail.
+    #[cfg(unix)]
     #[test]
     fn the_sleep_stand_in_starts_reliably_while_other_threads_fork() {
         use std::sync::atomic::{AtomicBool, Ordering};

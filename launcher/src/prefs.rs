@@ -5,7 +5,7 @@
 //! `Prefs_3.bxml` cache from it. Nothing here touches the client executable, the RDB or any game file: only that
 //! per-user file is written, and only the one entry that is asked for.
 //!
-//! Used for the outdated-graphics-driver warning (the original development measurements): the client
+//! Used for the outdated-graphics-driver warning (documentation/architecture.md): the client
 //! shows the dialog only while the preference `DriverUpdate_VersionToNotShowAgain` differs from the name of the
 //! OS-dependent "minimum driver" variable it checked (`MinimumDriver_Seven_ATI_DX10` for Windows 7 and newer, which is
 //! what Wine reports). Ticking "do not notify again" stores exactly that name; we store it up front.
@@ -20,7 +20,7 @@ pub const DRIVER_VALUE: &str = "MinimumDriver_Seven_ATI_DX10";
 pub const RESOLUTION_PREF: &str = "DisplayResolution";
 pub const DISPLAY_MODE_PREF: &str = "DisplayMode";
 
-/// The client's `DisplayMode` preference as measured on 2026-10-30 (the original development measurements section 2):
+/// The client's `DisplayMode` preference as measured on 2026-10-30 (documentation/architecture.md section 2):
 /// 0 = X11 `FULLSCREEN`, 1 = decorated window, 2 = also monitor-filling (probably borderless; Wine cannot tell it from 0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayMode {

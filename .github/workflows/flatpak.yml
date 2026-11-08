@@ -1,0 +1,96 @@
+# Builds the launcher Flatpak and offers it as a downloadable workflow artifact. MAIN ONLY: the job refuses every other ref (the trigger list alone
+# would be bypassable through a manual run from another branch), and it refuses a commit that is not part of main. Branches and pull requests are
+# covered by ci.yml, which builds no package. This workflow publishes nothing: the repository publication is the separate, manual release-flatpak.yml.
+# All logic lives in scripts/build_flatpak.sh; this file only prepares the machine and calls it.
+# It never commits, pushes, tags or publishes a release, uses no secrets, and contains no game data (the staged tree is scanned for that).
+name: flatpak
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "launcher/**"
+      - "launcher-gui/**"
+      - "patcher/**"
+      - "packaging/**"
+      - "scripts/build_flatpak.sh"
+      - "scripts/check_flatpak_package.py"
+      - ".github/workflows/flatpak.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flatpak-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # must equal "runtime-version" in packaging/flatpak/org.tswlauncher.Launcher.json (the policy test compares them)
+  FREEDESKTOP_VERSION: "25.08"
+
+jobs:
+  flatpak:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out the repository (read-only token, no stored credentials, full history for the main check)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Refuse a commit that is not part of main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_SHA is not on main: full packages are built from main only" >&2; exit 1; }
+
+      - name: Read and check the version (scripts/version.py, no network)
+        id: version
+        run: |
+          scripts/version.py check
+          echo "version=$(scripts/version.py show)" >> "$GITHUB_OUTPUT"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev
+
+      - name: Allow the unprivileged user namespaces that flatpak-builder (bubblewrap) needs on Ubuntu 24.04 (setting of this runner VM only)
+        run: |
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+      - name: Install the pinned Freedesktop runtime, SDK and Rust extension
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub \
+            "org.freedesktop.Platform//${FREEDESKTOP_VERSION}" \
+            "org.freedesktop.Sdk//${FREEDESKTOP_VERSION}" \
+            "org.freedesktop.Sdk.Extension.rust-stable//${FREEDESKTOP_VERSION}"
+
+      - name: Fetch the crates of the committed Cargo.lock for the tests (the runner starts with an empty cargo cache; network step 1 of 2)
+        run: scripts/build_flatpak.sh fetch --allow-network
+
+      - name: Tests (launcher, GUI, packaging policy) - before any package is built
+        run: scripts/build_flatpak.sh test
+
+      - name: Check the package (manifest, staged sources, desktop file, metainfo)
+        run: scripts/build_flatpak.sh check
+
+      - name: Vendor the crates of the committed Cargo.lock (network step 2 of 2)
+        run: scripts/build_flatpak.sh vendor --allow-network
+
+      - name: Build the Flatpak (offline from here on)
+        run: scripts/build_flatpak.sh build
+
+      - name: Export the bundle
+        run: scripts/build_flatpak.sh bundle
+
+      - name: Upload the Flatpak as an artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tsw-launcher-flatpak-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: |
+            build/flatpak/tsw-launcher.flatpak
+            build/flatpak/tsw-launcher.flatpak.sha256
+          if-no-files-found: error
+          retention-days: 30

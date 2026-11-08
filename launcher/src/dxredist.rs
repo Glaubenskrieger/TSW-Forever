@@ -10,7 +10,7 @@
 //!
 //! Licence: our artifacts contain no Microsoft payload. The verified package's original SDK/runtime terms are shown before new component
 //! provisioning, with separate explicit acceptance bound to the reviewed package/text hashes. Mandatory local rights remain unaffected;
-//! interoperability is not a blanket exception. See the Microsoft terms and limits summarized in README.md for the EU/German risk assessment and limits.
+//! interoperability is not a blanket exception. See documentation/microsoft-components.md for the EU/German risk assessment and limits.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -224,7 +224,7 @@ fn run(native_cache: &Path, profile: &NativeProfile, consent: bool, approval: &d
     Ok(cache)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::prefix::{NativeFile, NativeProfile};

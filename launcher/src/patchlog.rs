@@ -1,6 +1,6 @@
 //! The original patcher's own verdict on the installation, read from its `Patcher.log`.
 //!
-//! Evidence (the original development measurements): at the start of every run the patcher compares the local data with the
+//! Evidence (documentation/architecture.md): at the start of every run the patcher compares the local data with the
 //! patch server and logs a summary. A run that reports `Old roothash == New roothash` and `0` new/changed/deleted resources and `Downloading
 //! new/changed/patches: 0` says, by Funcom's own comparison against the server, that nothing is left to fetch. That is the only reliable "finished" mark:
 //! the index (`RDBHashIndex.bin`) is complete from the first second, the containers are pre-sized, and a finished download writes no final line.

@@ -38,6 +38,14 @@ pub const INSTALLER_NAME: &str = "TheSecretWorldInstaller.exe";
 pub const CLIENT_EXE: &str = crate::discover::CLIENT_EXE;
 /// Shown before the original installer is started (CLI and GUI). The German text is in the GUI translation.
 pub const INSTALLER_NOTICE: &str = "Please use the suggested default settings while installing The Secret World and do not change the installation path in particular. The suggested Windows path is inside the Wine/Proton environment managed by our launcher.";
+/// The notice for native Windows: there is no Wine environment, the original installer proposes its usual folder (Program Files); Windows itself asks for permission
+/// if the installer needs it.
+pub const INSTALLER_NOTICE_WINDOWS: &str =
+    "Please use the suggested default settings while installing The Secret World and do not change the installation path in particular. Windows may ask for your permission to start the installer.";
+/// The notice instead of [`INSTALLER_NOTICE_WINDOWS`] while the isolated test mode is on (`TSW_LAUNCH_EXCLUDE_DIRS`): the advice to keep the suggested folder would
+/// point the original installer at an existing installation.
+pub const INSTALLER_NOTICE_TEST_MODE: &str =
+    "TEST MODE: in the original installer choose a NEW, empty folder for the game - never an existing game folder. Windows may ask for your permission to start the installer.";
 pub const PATCHER_EXE: &str = "ClientPatcher.exe";
 
 /// A download source: where, and the checksum it must have (if one is known).
@@ -51,17 +59,17 @@ pub struct Source {
 }
 
 /// The official Funcom installer. The address comes from the Lutris installer script that the project owner uses
-/// (`the-secret-world-classic-online-installer`, the original component measurements); the server answers identically over HTTPS
+/// (`the-secret-world-classic-online-installer`, documentation/third-party-components.md); the server answers identically over HTTPS
 /// (valid certificate), so HTTPS is used and plain HTTP is refused.
 /// **The pinned checksum is a trust-on-first-use measurement, not a value published by Funcom**: SHA-256 of the file downloaded over HTTPS on
 /// 2026-10-31 (33 164 664 bytes, `Last-Modified` 22 Jun 2017). The file carries an Authenticode signature (Funcom Oslo, Symantec/VeriSign
 /// chain) whose validity was NOT verified here. The pin protects against a changed or damaged download, not against a file that was already
-/// wrong when measured. See the original component measurements. Whoever prefers an independent check supplies their
+/// wrong when measured. See documentation/third-party-components.md. Whoever prefers an independent check supplies their
 /// own installer (checksum shown before it is run) or pins another value.
 pub const OFFICIAL: Source = Source {
     url: "https://cdn.funcom.com/downloads/tsw/client/TheSecretWorldInstaller.exe",
     sha256: Some("9b9a71fbf198d5eab7fbea80a1cc93994d79d1526a1e199f62532fc2705d908e"),
-    origin: "trust-on-first-use measurement over HTTPS, 2026-10-31 (the original component measurements)",
+    origin: "trust-on-first-use measurement over HTTPS, 2026-10-31 (documentation/third-party-components.md)",
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,12 +168,50 @@ impl Layout {
         if base.to_string_lossy().chars().any(|c| c.is_control() || c == '\n') {
             return bad("the installation folder contains control characters");
         }
+        if cfg!(windows) {
+            if let Some(reason) = crate::winnative::forbidden_base(base, &crate::winnative::real_env) {
+                return bad(reason);
+            }
+        }
         Ok(Layout { base: base.to_path_buf() })
     }
 }
 
 fn is_symlink(p: &Path) -> bool {
     std::fs::symlink_metadata(p).map(|m| m.file_type().is_symlink()).unwrap_or(false)
+}
+
+/// May `path` become the folder of a NEW copy of the game? Rules: a full local Windows path that can be handed to the installer safely, not a drive root, not
+/// the Windows folder, not a network share, not overlapping any of the `existing` installations (the same folder, inside one, or one inside it), and either
+/// not existing yet (its parent must exist) or an empty folder. Nothing is created or changed here.
+pub fn validate_new_target(path: &Path, existing: &[PathBuf]) -> Result<PathBuf, String> {
+    let text = path.to_string_lossy();
+    if !crate::winnative::is_windows_absolute(&text) || text.starts_with("\\\\") {
+        return Err("choose a folder on a local drive (a full path such as D:\\Games\\The Secret World)".into());
+    }
+    if path.parent().is_none() || path.file_name().is_none() {
+        return Err("choose a folder, not a whole drive".into());
+    }
+    if !crate::winnative::is_shell_safe(path) {
+        return Err("the folder name contains characters (& % ^ | < > \" !) that cannot be handed to the installer safely; choose another folder".into());
+    }
+    if let Some(win) = crate::winnative::real_env("SystemRoot").or_else(|| crate::winnative::real_env("windir")) {
+        if crate::winnative::overlaps(path, Path::new(&win)) {
+            return Err("the Windows folder cannot hold the game".into());
+        }
+    }
+    if let Some(old) = existing.iter().find(|e| crate::winnative::overlaps(path, e)) {
+        return Err(format!("this folder overlaps the existing installation {}; choose a different, empty folder", old.display()));
+    }
+    if path.exists() {
+        let mut entries = std::fs::read_dir(path).map_err(|e| format!("the folder cannot be read: {e}"))?;
+        if !path.is_dir() || entries.next().is_some() {
+            return Err("the folder must be empty (a new copy never goes into a folder that already holds files)".into());
+        }
+    } else if !path.parent().is_some_and(|p| p.is_dir()) {
+        return Err("the parent folder does not exist; create it first or choose another folder".into());
+    }
+    Ok(path.to_path_buf())
 }
 
 /// Find the client executable below `dir` (at most 5 levels, no symlink is followed).
@@ -175,7 +221,11 @@ pub fn find_client(dir: &Path) -> Option<PathBuf> {
 
 /// Find a file by its (case-insensitive) name below `dir`, at most 5 levels deep, following no symlink.
 pub fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
-    fn walk(dir: &Path, depth: u32, name: &str) -> Option<PathBuf> {
+    fn walk(dir: &Path, depth: u32, name: &str, excluded: &[PathBuf]) -> Option<PathBuf> {
+        // test mode: a folder named in TSW_LAUNCH_EXCLUDE_DIRS is not even listed (only its name is compared)
+        if crate::winnative::is_excluded(dir, excluded) {
+            return None;
+        }
         let mut subdirs = Vec::new();
         for e in std::fs::read_dir(dir).ok()?.flatten() {
             let ft = e.file_type().ok()?;
@@ -187,9 +237,9 @@ pub fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
             }
         }
         subdirs.sort();
-        subdirs.into_iter().find_map(|d| walk(&d, depth + 1, name))
+        subdirs.into_iter().find_map(|d| walk(&d, depth + 1, name, excluded))
     }
-    walk(dir, 0, name)
+    walk(dir, 0, name, &crate::winnative::all_excluded_now())
 }
 
 /// Does `dir/<parts...>` exist, comparing names case-insensitively (the installer decides the case, not us)?
@@ -213,19 +263,26 @@ pub struct Found {
 
 /// Where the original installer puts the game by default: below the prefix.
 pub fn install_roots(layout: &Layout) -> Vec<PathBuf> {
+    if cfg!(windows) {
+        // the folder the original installer recorded (the user may have chosen any folder), then the default folders
+        return crate::winnative::search_roots();
+    }
     let c = layout.prefix().join("drive_c");
     vec![game_path(layout), c.join("Program Files (x86)"), c.join("Program Files")]
 }
 
 /// Where the original installer puts the game, directly inside the prefix (`C:\Program Files (x86)\Funcom\The Secret World`).
 pub fn game_path(layout: &Layout) -> PathBuf {
+    if cfg!(windows) {
+        return crate::winnative::default_game_dir(&crate::winnative::real_env).unwrap_or_else(|| layout.base.join("The Secret World"));
+    }
     layout.prefix().join("drive_c").join("Program Files (x86)").join("Funcom").join("The Secret World")
 }
 
 /// Detect the installation: a path the user chose by hand wins, then the default locations. Nothing is assumed about the path.
 pub fn find_installation(layout: &Layout, state: &State) -> Option<Found> {
     let complete = |client: &Path| client.parent().is_some_and(|d| exists_ci(d, &["RDB", "RDBHashIndex.bin"]));
-    if let Some(c) = state.client_exe.as_ref().filter(|c| c.is_file()) {
+    if let Some(c) = state.client_exe.as_ref().filter(|c| c.is_file() && !crate::winnative::is_excluded_now(c) && crate::winnative::stored_paths_honored()) {
         return Some(Found { client: c.clone(), complete: true });
     }
     install_roots(layout).iter().find_map(|r| find_client(r)).map(|client| Found { complete: complete(&client), client })
@@ -283,6 +340,9 @@ pub struct Assessment {
 /// Facts-only classification of `layout` (read-only, never hashes a file). `installer_sha`: the SHA-256 of the cached installer, if the
 /// caller has it (`None` while a front end is still computing it in the background).
 pub fn assess(layout: &Layout, state: &State, installer_sha: Option<&str>) -> Assessment {
+    if cfg!(windows) {
+        return assess_native(layout, state, installer_sha, &install_roots(layout));
+    }
     let done = |stage, next| Assessment { stage, next };
     let found = find_installation(layout, state);
     if let Some(f) = found.as_ref().filter(|f| f.complete) {
@@ -313,6 +373,41 @@ pub fn assess(layout: &Layout, state: &State, installer_sha: Option<&str>) -> As
     done(Stage::FoldersReady, Next::GetInstaller)
 }
 
+/// [`assess`] for native Windows: there is no Wine prefix and no runtime, so the steps are folders -> installer file -> original installer -> original
+/// patcher -> play. The game lives wherever the installer put it (`roots`) or where the user pointed (`state.client_exe`); the launcher's own folders
+/// only hold the downloaded installer, caches and logs. Pure over `roots`, so it is tested on every platform.
+pub fn assess_native(layout: &Layout, state: &State, installer_sha: Option<&str>, roots: &[PathBuf]) -> Assessment {
+    let done = |stage, next| Assessment { stage, next };
+    let complete = |client: &Path| client.parent().is_some_and(|d| exists_ci(d, &["RDB", "RDBHashIndex.bin"]));
+    let found = state
+        .client_exe
+        .as_ref()
+        .filter(|c| c.is_file() && !crate::winnative::is_excluded_now(c) && crate::winnative::stored_paths_honored())
+        .map(|c| Found { client: c.clone(), complete: true })
+        .or_else(|| roots.iter().find_map(|r| find_client(r)).map(|client| Found { complete: complete(&client), client }));
+    if let Some(f) = found.as_ref().filter(|f| f.complete) {
+        return done(Stage::Installed { client: f.client.clone() }, Next::Play);
+    }
+    if let Some(patcher) = roots.iter().find_map(|r| find_file(r, PATCHER_EXE)) {
+        return done(Stage::PatcherReady { patcher }, Next::RunPatcher);
+    }
+    if !layout.base.is_dir() || !layout.downloads().is_dir() {
+        return done(if layout.base.is_dir() { Stage::FoldersReady } else { Stage::Empty }, Next::PrepareFolders);
+    }
+    if layout.installer().is_file() {
+        let checksum = match installer_sha {
+            None => Checksum::Pending,
+            Some(h) if state.recognises(&OFFICIAL, h) => Checksum::Verified,
+            Some(_) => Checksum::Unverified,
+        };
+        return done(Stage::InstallerReady { checksum }, Next::RunInstaller);
+    }
+    if let Ok(m) = std::fs::metadata(layout.partial()) {
+        return done(Stage::PartialDownload { bytes: m.len() }, Next::GetInstaller);
+    }
+    done(Stage::FoldersReady, Next::GetInstaller)
+}
+
 // ---- persisted decisions --------------------------------------------------------------------------------------------------
 
 /// What the user decided. Plain `key = value` text next to the launcher configuration; never a secret.
@@ -327,6 +422,17 @@ pub struct State {
     pub confirmed_sha256: Option<String>,
     /// Client executable chosen by hand (manual path selection), used when automatic detection finds nothing.
     pub client_exe: Option<PathBuf>,
+    /// Installations the user chose to ignore ("install a new copy in another folder"): nothing in these folders is detected, adopted or searched. They are
+    /// never opened, changed or removed by the launcher.
+    pub ignored: Vec<PathBuf>,
+    /// The folder of the new copy: handed to the original installer explicitly (`/DIR`) and searched for the new installation.
+    pub target: Option<PathBuf>,
+    /// Windows, while the automatic detection is paused ([`crate::winnative::AUTODETECT_PAUSED_ON_WINDOWS`]): the launcher has started the original installer.
+    pub install_started: bool,
+    /// The folders the registry named at that moment; only entries that are new since then are taken as the new installation.
+    pub registry_baseline: Vec<PathBuf>,
+    /// The user chose an installation deliberately (manually, or a finished installation of the launcher): stored paths count from then on.
+    pub choice_made: bool,
 }
 
 impl State {
@@ -355,6 +461,21 @@ impl State {
                     s.confirmed_sha256 = Some(v.to_ascii_lowercase());
                 }
                 "client_exe" => s.client_exe = Some(PathBuf::from(v)),
+                "ignored_install" => {
+                    let p = PathBuf::from(v);
+                    if !s.ignored.contains(&p) {
+                        s.ignored.push(p);
+                    }
+                }
+                "install_target" => s.target = Some(PathBuf::from(v)),
+                "install_started" => s.install_started = matches!(v, "yes" | "true" | "1"),
+                "registry_baseline" => {
+                    let p = PathBuf::from(v);
+                    if !s.registry_baseline.contains(&p) {
+                        s.registry_baseline.push(p);
+                    }
+                }
+                "choice_made" => s.choice_made = matches!(v, "yes" | "true" | "1"),
                 // written by a short-lived earlier version (external game folder): read and ignored
                 "game_dir" => {}
                 other => return Err(format!("install state line {}: unknown key {other:?}", i + 1)),
@@ -380,7 +501,43 @@ impl State {
         if let Some(c) = &self.client_exe {
             t.push_str(&format!("client_exe = {}\n", c.display()));
         }
+        for p in &self.ignored {
+            t.push_str(&format!("ignored_install = {}\n", p.display()));
+        }
+        if let Some(p) = &self.target {
+            t.push_str(&format!("install_target = {}\n", p.display()));
+        }
+        if self.install_started {
+            t.push_str("install_started = yes\n");
+        }
+        for p in &self.registry_baseline {
+            t.push_str(&format!("registry_baseline = {}\n", p.display()));
+        }
+        if self.choice_made {
+            t.push_str("choice_made = yes\n");
+        }
         t
+    }
+
+    /// Hand the user's search decision (ignored installations, the folder of the new copy) to the detection. Called whenever the state was loaded or changed.
+    pub fn apply_search(&self) {
+        crate::winnative::set_user_search(self.ignored.clone(), self.target.iter().cloned().collect());
+        crate::winnative::set_autodetect(crate::winnative::autodetect_pause_enabled(), self.install_started, self.registry_baseline.clone(), self.choice_made);
+    }
+
+    /// The launcher is about to start the original installer: from now on the registry is read again, but only for entries that are new compared with
+    /// `registry_now` (what the registry names right now).
+    pub fn note_installer_started(&mut self, registry_now: Vec<PathBuf>) {
+        if !self.install_started {
+            self.install_started = true;
+            self.registry_baseline = registry_now;
+        }
+    }
+
+    /// Forget the decision "install a new copy": the ignored installations are visible again, the new folder is no longer preselected.
+    pub fn use_ignored_again(&mut self) {
+        self.ignored.clear();
+        self.target = None;
     }
 
     pub fn load(path: &Path) -> Result<State, String> {
@@ -417,6 +574,10 @@ impl State {
 /// The default installation folder: `~/Games/The Secret World` - prefix, runtime, downloads, caches and logs below it, in a Flatpak as well (the sandbox
 /// is granted exactly this folder).
 pub fn default_base(home: Option<&Path>) -> Option<PathBuf> {
+    if cfg!(windows) {
+        // native Windows: the launcher's own data in the user profile (the game is installed where the original installer puts it)
+        return crate::winnative::data_dir(&crate::winnative::real_env);
+    }
     home.map(|h| h.join("Games").join("The Secret World"))
 }
 
@@ -438,7 +599,12 @@ pub fn state_path() -> Option<PathBuf> {
 /// is refused unless it is the very installation described by `assess` (then there is nothing to create).
 /// Symbolic links in place of these folders are refused. Nothing outside `<base>` is touched.
 pub fn prepare(layout: &Layout) -> Result<(), InstallError> {
-    let wanted = [layout.base.clone(), layout.prefix(), layout.runtime(), layout.downloads(), layout.cache(), layout.logs()];
+    // native Windows has no Wine prefix and no runtime: only the launcher's own folders are created
+    let wanted: Vec<PathBuf> = if cfg!(windows) {
+        vec![layout.base.clone(), layout.downloads(), layout.cache(), layout.logs()]
+    } else {
+        vec![layout.base.clone(), layout.prefix(), layout.runtime(), layout.downloads(), layout.cache(), layout.logs()]
+    };
     for d in &wanted {
         if is_symlink(d) {
             return Err(InstallError::BadBase(format!("{} is a symbolic link; choose a real folder", d.display())));
@@ -447,8 +613,9 @@ pub fn prepare(layout: &Layout) -> Result<(), InstallError> {
             return Err(InstallError::BadBase(format!("{} exists and is not a folder", d.display())));
         }
     }
-    let p = layout.prefix();
-    crate::prefix::may_initialise(&p).map_err(InstallError::Blocked)?;
+    if !cfg!(windows) {
+        crate::prefix::may_initialise(&layout.prefix()).map_err(InstallError::Blocked)?;
+    }
     for d in &wanted {
         std::fs::create_dir_all(d).map_err(|e| failed(&format!("cannot create {}", d.display()), e))?;
     }
@@ -663,7 +830,7 @@ pub fn run_gate(layout: &Layout, state: &State, source: &Source, installer_sha: 
     if !layout.installer().is_file() {
         return Err(InstallError::Failed("there is no installer in the cache yet".into()));
     }
-    if !layout.prefix().join("user.reg").is_file() {
+    if !cfg!(windows) && !layout.prefix().join("user.reg").is_file() {
         return Err(InstallError::Failed("create the prefix first".into()));
     }
     // a checksum the user pinned explicitly is an expectation: a different file is a mismatch, never silently accepted
@@ -682,6 +849,26 @@ pub fn run_gate(layout: &Layout, state: &State, source: &Source, installer_sha: 
 /// The command that runs the original installer interactively in the prefix: `<wine> <installer>` in the cache folder with
 /// `WINEPREFIX` set; menu-entry creation and Mono/Gecko downloads are switched off so nothing is written outside `<base>`.
 pub fn installer_command(layout: &Layout, wine: &Path) -> Command {
+    installer_command_to(layout, wine, None).expect("no destination folder, so nothing can be unsafe")
+}
+
+/// [`installer_command`] for a NEW copy: on Windows the original installer gets the destination folder explicitly (`/DIR="..."`), so it cannot silently reuse
+/// the folder of an earlier installation. `None` if the folder cannot be handed over safely: the installer must then not be started.
+pub fn installer_command_to(layout: &Layout, wine: &Path, target: Option<&Path>) -> Option<Command> {
+    if cfg!(windows) {
+        if let Some(t) = target {
+            return crate::winnative::start_command_with_dir(&layout.installer(), &layout.downloads(), t);
+        }
+        return Some(installer_command_plain(layout, wine));
+    }
+    Some(installer_command_plain(layout, wine))
+}
+
+fn installer_command_plain(layout: &Layout, wine: &Path) -> Command {
+    if cfg!(windows) {
+        // the original installer asks Windows for administrator rights itself (UAC); the launcher stays unelevated
+        return crate::winnative::start_command(&layout.installer(), &layout.downloads());
+    }
     let mut c = Command::new(wine);
     c.arg(layout.installer()).current_dir(layout.downloads()).env("WINEPREFIX", layout.prefix()).env("WINEDLLOVERRIDES", "mscoree=d;mshtml=d;winemenubuilder.exe=d").env("WINEDEBUG", "-all");
     c
@@ -700,6 +887,9 @@ pub fn patcher_to_run(stage: &Stage) -> Option<PathBuf> {
 }
 
 pub fn patcher_command(layout: &Layout, wine: &Path, patcher: &Path) -> Command {
+    if cfg!(windows) {
+        return crate::winnative::start_command(patcher, patcher.parent().unwrap_or(&layout.base));
+    }
     let mut c = Command::new(wine);
     c.arg(patcher)
         .current_dir(patcher.parent().unwrap_or(&layout.base))
@@ -801,6 +991,9 @@ pub struct Adoption {
 
 /// Resolve what the user pointed at (the client executable, or a folder that contains it) without changing anything.
 pub fn adopt(path: &Path) -> Result<PathBuf, InstallError> {
+    if crate::winnative::is_excluded_now(path) {
+        return Err(InstallError::Failed(format!("{} is excluded by the isolated test mode (TSW_LAUNCH_EXCLUDE_DIRS) and cannot be used", path.display())));
+    }
     let exe = if path.is_dir() { find_client(path) } else { path.is_file().then(|| path.to_path_buf()) };
     let exe = exe.ok_or_else(|| InstallError::Failed(format!("no {CLIENT_EXE} found at {}", path.display())))?;
     if !exe.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(CLIENT_EXE)) {
@@ -834,7 +1027,7 @@ pub fn adoption_for(layout: &Layout, state: &State) -> Option<Adoption> {
 
 // ---- tests ------------------------------------------------------------------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     /// The shipped source without its pin: most tests pin their own fixture checksum.
     const UNPINNED: Source = Source { sha256: None, ..OFFICIAL };
@@ -965,6 +1158,11 @@ mod tests {
             pinned_sha256: Some("ab".repeat(32)),
             confirmed_sha256: Some("cd".repeat(32)),
             client_exe: Some("/g/c.exe".into()),
+            ignored: vec!["/mnt/alt".into()],
+            target: Some("/mnt/neu".into()),
+            install_started: true,
+            registry_baseline: vec!["/mnt/reg".into()],
+            choice_made: true,
         };
         s.save(&p).unwrap();
         assert_eq!(State::load(&p).unwrap(), s);
@@ -1482,6 +1680,9 @@ pub fn should_close(ev: &Evidence, started_here: bool, attempted: bool) -> bool 
 /// (a close message, never a forced end), for this one program name, in this launcher's own prefix (its own Wine server). Run it inside the same sandbox as
 /// the patcher.
 pub fn close_patcher_command(layout: &Layout, wine: &Path) -> Command {
+    if cfg!(windows) {
+        return crate::winnative::close_command(PATCHER_EXE);
+    }
     let mut c = Command::new(wine);
     c.args(["taskkill", "/im", PATCHER_EXE]).env("WINEPREFIX", layout.prefix()).env("WINEDLLOVERRIDES", "mscoree=d;mshtml=d;winemenubuilder.exe=d").env("WINEDEBUG", "-all");
     c
@@ -1556,7 +1757,7 @@ pub fn gate(adopted: bool, ev: &Evidence, run_finished: bool) -> Gate {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod evidence_tests {
     use super::*;
     use crate::patchlog::Verdict;
@@ -1760,5 +1961,195 @@ mod evidence_tests {
         let got = gather_evidence(&layout, &State::default());
         assert_eq!((got.verdict, got.patcher_running, got.installer_running), (Verdict::Complete, false, false));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod native_tests {
+    //! The Windows state machine ([`assess_native`]) on every platform: fixtures stand in for `Program Files`.
+    use super::*;
+
+    #[test]
+    fn the_detection_pause_markers_round_trip_and_the_baseline_is_taken_once() {
+        let mut s = State::default();
+        s.note_installer_started(vec![PathBuf::from("C:\\Games\\The Secret World")]);
+        s.note_installer_started(vec![PathBuf::from("D:\\Anderswo")]); // a second start does not move the baseline
+        s.choice_made = true;
+        assert!(s.install_started && s.registry_baseline == vec![PathBuf::from("C:\\Games\\The Secret World")]);
+        let text = s.to_text();
+        assert!(text.contains("install_started = yes\n") && text.contains("registry_baseline = C:\\Games\\The Secret World\n") && text.contains("choice_made = yes\n"));
+        assert_eq!(State::parse(&text).unwrap(), s);
+        assert!(!State::default().to_text().contains("install_started") && !State::default().to_text().contains("choice_made"), "unset stays unset");
+    }
+
+    #[test]
+    fn the_new_copy_decision_round_trips_through_the_state_file() {
+        let s = State { ignored: vec![PathBuf::from("C:\\Games\\The Secret World"), PathBuf::from("D:\\Alt")], target: Some(PathBuf::from("E:\\Neu Spiel")), ..State::default() };
+        let text = s.to_text();
+        assert!(text.contains("ignored_install = C:\\Games\\The Secret World\n") && text.contains("install_target = E:\\Neu Spiel\n"));
+        assert_eq!(State::parse(&text).unwrap(), s);
+        assert_eq!(State::parse("ignored_install = X:\\a\nignored_install = X:\\a\n").unwrap().ignored.len(), 1, "no duplicates");
+        let mut t = s.clone();
+        t.use_ignored_again();
+        assert!(t.ignored.is_empty() && t.target.is_none() && !t.to_text().contains("ignored_install"));
+    }
+
+    #[cfg(windows)] // the rules are about Windows paths (drive letters, UNC shares)
+    #[test]
+    fn a_new_copy_may_only_go_into_an_empty_or_missing_folder_apart_from_every_existing_installation() {
+        let root = tmp("newtarget");
+        let old = root.join("Games").join("The Secret World");
+        std::fs::create_dir_all(&old).unwrap();
+        let existing = vec![old.clone()];
+        let ok = root.join("Neu");
+        assert_eq!(validate_new_target(&ok, &existing), Ok(ok.clone()), "a missing folder below an existing parent is fine");
+        std::fs::create_dir_all(&ok).unwrap();
+        assert!(validate_new_target(&ok, &existing).is_ok(), "an empty folder is fine");
+        std::fs::write(ok.join("x.txt"), b"x").unwrap();
+        assert!(validate_new_target(&ok, &existing).unwrap_err().contains("must be empty"));
+        for bad in [
+            old.clone(),
+            old.join("RDB"),
+            root.join("Games"),
+            PathBuf::from("relative\\x"),
+            PathBuf::from("C:\\"),
+            PathBuf::from("\\\\server\\share\\x"),
+            root.join("a&b"),
+            root.join("nope").join("deeper"),
+        ] {
+            assert!(validate_new_target(&bad, &existing).is_err(), "{bad:?}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_ignored_installation_is_invisible_to_the_detection_and_the_new_folder_is_searched_first() {
+        let _serial = crate::winnative::SEARCH_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("ignored");
+        let old = game(&root.join("alt"), true, true);
+        let new = game(&root.join("neu"), true, true);
+        let state = State { ignored: vec![old.clone()], target: Some(root.join("neu")), ..State::default() };
+        state.apply_search();
+        assert!(find_client(&old).is_none(), "an ignored installation is not found");
+        assert!(find_client(&root).is_some_and(|c| c.starts_with(&new)), "a search from above skips it");
+        assert!(matches!(adopt(&old), Err(InstallError::Failed(_))), "and cannot be adopted");
+        let layout = Layout { base: root.join("base") };
+        let with_stored = State { client_exe: Some(old.join(CLIENT_EXE)), ..state.clone() };
+        let a = assess_native(&layout, &with_stored, None, &[root.join("alt")]);
+        assert!(!matches!(a.stage, Stage::Installed { .. }), "a stored choice inside an ignored folder does not count: {:?}", a.stage);
+        crate::winnative::reset_user_search();
+        assert!(find_client(&old).is_some(), "without the decision nothing is hidden");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The isolated first-installation test: an existing installation named in `TSW_LAUNCH_EXCLUDE_DIRS` is invisible (not found, not listed, not adoptable),
+    /// the files in it are never touched, and any other folder works as usual. The variable is set for this process only, to a folder unique to this test.
+    #[test]
+    fn an_excluded_installation_is_invisible_and_everything_else_is_found() {
+        let _serial = crate::winnative::SEARCH_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("excluded");
+        let hidden = game(&root.join("one"), true, true);
+        let visible = game(&root.join("two"), true, true);
+        let before: Vec<_> = [&hidden, &visible].iter().map(|d| std::fs::metadata(d.join(CLIENT_EXE)).unwrap().modified().unwrap()).collect();
+        std::env::set_var(crate::winnative::ENV_EXCLUDE_DIRS, &hidden);
+        assert!(find_client(&root.join("one")).is_none(), "the excluded folder is not searched");
+        assert!(find_client(&root).is_some_and(|c| c.starts_with(&visible)), "a search from above skips the excluded folder and finds the other one");
+        assert!(find_file(&hidden, PATCHER_EXE).is_none() && find_file(&root, PATCHER_EXE).is_none_or(|p| !p.starts_with(&hidden)));
+        assert!(matches!(adopt(&hidden), Err(InstallError::Failed(m)) if m.contains("excluded")), "adopting it is refused");
+        assert!(matches!(adopt(&hidden.join(CLIENT_EXE)), Err(InstallError::Failed(_))));
+        assert!(adopt(&visible).is_ok(), "a folder that is not excluded can still be adopted");
+        let layout = Layout { base: root.join("base") };
+        let state = State { client_exe: Some(hidden.join(CLIENT_EXE)), ..State::default() };
+        let a = assess_native(&layout, &state, None, &[root.join("one"), root.join("two")]);
+        assert!(matches!(a.stage, Stage::Installed { ref client } if client.starts_with(&visible)), "a stored choice inside the excluded folder is ignored: {:?}", a.stage);
+        std::env::remove_var(crate::winnative::ENV_EXCLUDE_DIRS);
+        assert!(find_client(&root.join("one")).is_some(), "without the variable nothing is hidden");
+        let after: Vec<_> = [&hidden, &visible].iter().map(|d| std::fs::metadata(d.join(CLIENT_EXE)).unwrap().modified().unwrap()).collect();
+        assert_eq!(before, after, "no file was touched");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("tsw-native-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn game(root: &Path, with_data: bool, with_patcher: bool) -> PathBuf {
+        let dir = root.join("Funcom").join("The Secret World");
+        std::fs::create_dir_all(dir.join("RDB")).unwrap();
+        std::fs::write(dir.join(CLIENT_EXE), b"MZ").unwrap();
+        if with_data {
+            std::fs::write(dir.join("RDB").join("RDBHashIndex.bin"), b"x").unwrap();
+        }
+        if with_patcher {
+            std::fs::write(dir.join(PATCHER_EXE), b"MZ").unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn the_windows_steps_skip_the_prefix_and_the_runtime() {
+        let d = tmp("steps");
+        let base = d.join("data");
+        let layout = Layout { base: base.clone() };
+        let state = State::default();
+        let roots = vec![d.join("Program Files (x86)").join("Funcom")];
+        assert_eq!(assess_native(&layout, &state, None, &roots), Assessment { stage: Stage::Empty, next: Next::PrepareFolders });
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(assess_native(&layout, &state, None, &roots).next, Next::PrepareFolders, "the downloads folder is still missing");
+        std::fs::create_dir_all(layout.downloads()).unwrap();
+        assert_eq!(assess_native(&layout, &state, None, &roots), Assessment { stage: Stage::FoldersReady, next: Next::GetInstaller });
+        std::fs::write(layout.partial(), vec![0u8; 10]).unwrap();
+        assert_eq!(assess_native(&layout, &state, None, &roots), Assessment { stage: Stage::PartialDownload { bytes: 10 }, next: Next::GetInstaller });
+        std::fs::write(layout.installer(), b"MZ").unwrap();
+        let a = assess_native(&layout, &state, None, &roots);
+        assert_eq!(a, Assessment { stage: Stage::InstallerReady { checksum: Checksum::Pending }, next: Next::RunInstaller }, "straight to the original installer, no CreatePrefix");
+        assert_eq!(assess_native(&layout, &state, Some(OFFICIAL.sha256.unwrap()), &roots).stage, Stage::InstallerReady { checksum: Checksum::Verified });
+        assert_eq!(assess_native(&layout, &state, Some("00"), &roots).stage, Stage::InstallerReady { checksum: Checksum::Unverified });
+        assert!(!layout.prefix().exists() && !layout.runtime().exists(), "nothing of the Wine layout is needed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_installed_game_is_found_where_the_installer_put_it_and_the_patcher_alone_means_run_the_patcher() {
+        let d = tmp("found");
+        let layout = Layout { base: d.join("data") };
+        let state = State::default();
+        let pf = d.join("Program Files (x86)");
+        let roots = vec![pf.join("Funcom")];
+        let dir = game(&pf, false, true);
+        assert_eq!(assess_native(&layout, &state, None, &roots).next, Next::RunPatcher, "client without its data: the original patcher fetches the data");
+        std::fs::write(dir.join("RDB").join("RDBHashIndex.bin"), b"x").unwrap();
+        let a = assess_native(&layout, &state, None, &roots);
+        assert_eq!(a, Assessment { stage: Stage::Installed { client: dir.join(CLIENT_EXE) }, next: Next::Play });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_game_the_user_pointed_at_is_used_wherever_it_is() {
+        let d = tmp("manual");
+        let layout = Layout { base: d.join("data") };
+        let elsewhere = d.join("D-drive");
+        let dir = game(&elsewhere, true, false);
+        let state = State { client_exe: Some(dir.join(CLIENT_EXE)), ..State::default() };
+        let a = assess_native(&layout, &state, None, &[d.join("Program Files (x86)").join("Funcom")]);
+        assert_eq!(a.next, Next::Play);
+        // nothing is assumed about a missing file: a stale path does not count
+        let stale = State { client_exe: Some(d.join("gone").join(CLIENT_EXE)), ..State::default() };
+        assert_ne!(assess_native(&layout, &stale, None, &[]).next, Next::Play);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_windows_commands_use_the_system_facilities_and_never_wine() {
+        let layout = Layout { base: PathBuf::from("C:\\Users\\Anna\\AppData\\Local\\TSW-Forever") };
+        // the Windows branches are reached through `cfg!(windows)`; the building blocks are what is checked everywhere
+        let c = crate::winnative::start_command(&layout.installer(), &layout.downloads());
+        assert_eq!(c.get_program(), "cmd");
+        let close = crate::winnative::close_command(PATCHER_EXE);
+        assert_eq!(close.get_program(), "taskkill");
+        assert!(close.get_envs().next().is_none(), "no Wine environment is involved");
     }
 }

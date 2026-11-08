@@ -1,0 +1,156 @@
+# Builds the two official Linux release artifacts - the Flatpak bundle and the source archive - from the CHECKED-IN sources of one ref, checks them and uploads
+# them as WORKFLOW ARTIFACTS of this run. There are no distribution-specific packages (no .deb, no Arch package, no RPM, no AppImage). It does NOT create a GitHub
+# Release, does not publish a Flatpak repository, does not push, tag or commit, has no write permission and no secrets: whatever you start here, nothing becomes
+# public. Start it by hand (Actions -> rc-artifacts -> Run workflow); for a release candidate choose the TAG (v<APP_VERSION>) under "Use workflow from". The tag is
+# verified against APP_VERSION and against main.
+name: rc-artifacts
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      artifact:
+        description: "Name of the uploaded Linux release set"
+        value: ${{ jobs.build.outputs.artifact }}
+permissions:
+  contents: read
+concurrency:
+  group: rc-artifacts-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  FREEDESKTOP_VERSION: "25.08"
+  RUST_VERSION: "1.99.0"
+jobs:
+  build:
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      artifact: tsw-forever-${{ steps.version.outputs.version }}-release-set-${{ github.sha }}
+    steps:
+      - name: Check out the repository (read-only token, no stored credentials, full history for the main check)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Refuse a commit that is not part of main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_SHA is not on main: artifacts are built from main or from a tag on main only" >&2; exit 1; }
+      - name: Read and check the version; a tag must be v<APP_VERSION>
+        id: version
+        run: |
+          scripts/version.py check
+          version="$(scripts/version.py show)"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match APP_VERSION $version (expected v$version)" >&2; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Refuse unpinned actions
+        run: scripts/pin_actions.sh --check
+      - name: Disk report - runner start (baseline)
+        run: scripts/ci_disk_report.sh "1 runner start"
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev libxi-dev
+      - name: Allow the unprivileged user namespaces that flatpak-builder (bubblewrap) needs on Ubuntu 24.04 (setting of this runner VM only)
+        run: |
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+      - name: Install the pinned Freedesktop runtime, SDK and Rust extension
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub \
+            "org.freedesktop.Platform//${FREEDESKTOP_VERSION}" \
+            "org.freedesktop.Sdk//${FREEDESKTOP_VERSION}" \
+            "org.freedesktop.Sdk.Extension.rust-stable//${FREEDESKTOP_VERSION}"
+      - name: Install the pinned Rust toolchain for the source archive check
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - name: Disk report - after the installation of the Flatpak runtime, SDK and Rust toolchain
+        run: scripts/ci_disk_report.sh "2 after installing runtime, SDK and Rust"
+      - name: Fetch the crates of the committed Cargo.lock for the tests (network step 1 of 2)
+        run: scripts/build_flatpak.sh fetch --allow-network
+      - name: Tests (launcher, GUI, patcher, packaging policy and the release scripts) - before any artifact is built
+        run: |
+          scripts/build_flatpak.sh test
+          python3 -I scripts/test_check_release_artifacts.py
+          python3 -I scripts/test_check_release_set.py
+      - name: Check the Flatpak package (manifest, staged sources, desktop file, metainfo)
+        run: scripts/build_flatpak.sh check
+      - name: Free the disk space of the test builds (the runner disk also holds the Flatpak runtime and SDK and the vendored crates)
+        run: |
+          scripts/ci_disk_report.sh "3 after the tests, before cleanup 1"
+          rm -rf launcher/target launcher-gui/target patcher/target
+          scripts/ci_disk_report.sh "4 after cleanup 1 (test builds removed)"
+      - name: Vendor the crates of the committed Cargo.lock (network step 2 of 2)
+        run: scripts/build_flatpak.sh vendor --allow-network
+      - name: Build the Flatpak (offline from here on)
+        run: scripts/build_flatpak.sh build
+      - name: Export the Flatpak bundle
+        run: scripts/build_flatpak.sh bundle
+      - name: Free the disk space of the Flatpak build (the bundle is exported; the Platform runtime stays for the installation check)
+        run: |
+          scripts/ci_disk_report.sh "5 after the Flatpak build and bundle, before cleanup 2"
+          rm -rf build/flatpak/state build/flatpak/build-dir build/flatpak/repo
+          flatpak uninstall --user --noninteractive "org.freedesktop.Sdk.Extension.rust-stable//${FREEDESKTOP_VERSION}" "org.freedesktop.Sdk//${FREEDESKTOP_VERSION}"
+          scripts/ci_disk_report.sh "6 after cleanup 2 (Flatpak build state and SDK removed)"
+      - name: Stage the deterministic source archive (built twice, both must have the same hash)
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          scripts/native_stage.sh
+          first="$(sha256sum "build/native/tsw-forever-${version}-src.tar.gz" | cut -d' ' -f1)"
+          scripts/native_stage.sh
+          second="$(sha256sum "build/native/tsw-forever-${version}-src.tar.gz" | cut -d' ' -f1)"
+          [ "$first" = "$second" ] || { echo "the source archive is not reproducible: $first != $second" >&2; exit 1; }
+          echo "source archive sha256 $first (identical on two runs)"
+      - name: Check that the source archive builds on its own (unpacked, vendored crates, offline)
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          check="$GITHUB_WORKSPACE/build/source-check"
+          mkdir -p "$check"
+          tar xzf "build/native/tsw-forever-${version}-src.tar.gz" -C "$check"
+          cd "$check/tsw-forever-${version}"
+          python3 -I scripts/version.py check
+          mkdir -p .cargo
+          printf '[source.crates-io]\nreplace-with = "vendored-sources"\n\n[source.vendored-sources]\ndirectory = "%s"\n' "$GITHUB_WORKSPACE/build/flatpak/src/vendor" > .cargo/config.toml
+          export CARGO_TARGET_DIR="$check/target"
+          for crate in launcher launcher-gui; do
+            cargo "+${RUST_VERSION}" check --locked --offline --manifest-path "$crate/Cargo.toml"
+          done
+      - name: Free the disk space of the source archive check
+        run: |
+          scripts/ci_disk_report.sh "7 after the source archive check, before cleanup 3"
+          rm -rf build/source-check
+          scripts/ci_disk_report.sh "8 after cleanup 3 (source archive check removed)"
+      - name: Assemble the release set (names, checksums) and verify that it is consistent
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          set="build/rc"
+          mkdir -p "$set"
+          cp build/flatpak/tsw-launcher.flatpak "$set/tsw-forever-${version}.flatpak"
+          cp "build/native/tsw-forever-${version}-src.tar.gz" "$set/"
+          (cd "$set" && sha256sum tsw-forever-*.flatpak tsw-forever-*-src.tar.gz > SHA256SUMS && cat SHA256SUMS)
+          python3 -I scripts/check_release_set.py "$set"
+          python3 -I scripts/check_public_source.py "$set/tsw-forever-${version}-src.tar.gz"
+      - name: Audit the artifacts - install the bundle, check that it starts, and that no Microsoft or Funcom file, Windows program or game data is inside
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          set="build/rc"
+          flatpak install --user --noninteractive "$set/tsw-forever-${version}.flatpak"
+          reported="$(flatpak run --command=tsw-launch org.tswlauncher.Launcher//local --version)"
+          echo "$reported"
+          case "$reported" in *"$version"*) ;; *) echo "the installed Flatpak reports another version than $version" >&2; exit 1;; esac
+          python3 -I scripts/check_release_artifacts.py \
+            "$set/tsw-forever-${version}-src.tar.gz" \
+            "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/local/active/files"
+          python3 -I scripts/check_licenses.py "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/local/active/files/share/licenses/tsw-forever"
+      - name: Upload the release set as workflow artifacts (no release is created; kept 30 days)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tsw-forever-${{ steps.version.outputs.version }}-release-set-${{ github.sha }}
+          path: build/rc/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Disk report - end of the job (also after a failure)
+        if: ${{ always() }}
+        run: scripts/ci_disk_report.sh "9 end of the job"

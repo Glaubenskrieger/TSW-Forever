@@ -183,7 +183,7 @@ pub fn find_runtimes(env: &Env) -> Vec<Runtime> {
     }
     if let Some(home) = &env.home {
         // The host's Steam tools. Inside a Flatpak `XDG_DATA_HOME` points to the app's own data folder, so the host path is
-        // spelled out here; it is visible only if the user granted `--filesystem=xdg-data/Steam:ro` (see the Flatpak manifest).
+        // spelled out here; it is visible only if the user granted `--filesystem=xdg-data/Steam:ro` (see documentation/packaging.md).
         dirs.extend(children(&home.join(".local").join("share").join("Steam").join("compatibilitytools.d")));
         dirs.extend(children(&home.join(".steam").join("root").join("compatibilitytools.d")));
         dirs.extend(children(&home.join(".steam").join("steam").join("compatibilitytools.d")));
@@ -230,9 +230,13 @@ pub fn detect(env: &Env, cfg: &Config, cache: &Config) -> Result<Detected, Probl
 
     let client_exe = match (&cfg.client_exe, &cache.client_exe) {
         (Some(p), _) => p.clone(),
-        (None, Some(c)) if c.is_file() => c.clone(),
+        (None, Some(c)) if c.is_file() && !crate::winnative::is_excluded_now(c) => c.clone(),
         _ => {
             let mut v = find_installs(env);
+            if v.is_empty() && cfg!(windows) {
+                // native Windows: the usual places of the original installer and of Steam
+                v = find_native_installs(&crate::winnative::search_roots());
+            }
             match v.len() {
                 0 => return Err(Problem::NoInstall),
                 1 => v.remove(0),
@@ -244,6 +248,7 @@ pub fn detect(env: &Env, cfg: &Config, cache: &Config) -> Result<Detected, Probl
     let runner = match (&cfg.runner, &cache.runner) {
         (Some(r), _) => r.clone(),
         (None, Some(c)) if Path::new(c).is_file() => c.clone(),
+        _ if cfg!(windows) => "native".to_string(), // Windows runs the client itself: no Wine runtime exists to be searched
         _ => {
             let runtimes = find_runtimes(env);
             let best = runtimes.first().ok_or(Problem::NoRuntime)?;
@@ -259,13 +264,30 @@ pub fn detect(env: &Env, cfg: &Config, cache: &Config) -> Result<Detected, Probl
         }
     };
 
+    // The native runner has no Wine prefix. `Detected.prefix` is not optional, so the client's own folder stands in (nothing is ever created or written there
+    // because of this); it is not a managed prefix.
+    let native = runner == "native";
     let (prefix, managed_prefix) = match (&cfg.prefix, &env.wineprefix, &cache.prefix) {
+        _ if native => (client_exe.parent().map(Path::to_path_buf).unwrap_or_default(), false),
         (Some(p), _, _) => (p.clone(), false),
         (None, Some(p), _) => (p.clone(), false),
         (None, None, Some(c)) => (c.clone(), true),
         (None, None, None) => (self::managed_prefix(env, &client_exe).ok_or(Problem::NoInstall)?, true),
     };
     Ok(Detected { client_exe, runner, prefix, managed_prefix, notes, note_codes })
+}
+
+/// Client executables below the given folders (the default places of the original installer and of Steam on Windows), each found once, in order.
+pub fn find_native_installs(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        if let Some(exe) = crate::install::find_client(root) {
+            if !out.contains(&exe) {
+                out.push(exe);
+            }
+        }
+    }
+    out
 }
 
 /// [`detect`] with the cache file: loads it, detects, and stores the result when it changed (failure to store is ignored;
@@ -330,6 +352,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[cfg(unix)] // Wine runtime and prefix discovery; Windows has no Wine (detect() picks the native runner, tested in native tests)
+    #[test]
+    fn the_native_runner_needs_no_wine_runtime_and_no_prefix() {
+        let d = tmp("native");
+        let exe = fake_project(&d.join("game"));
+        let cfg = Config { client_exe: Some(exe.clone()), runner: Some("native".into()), ..Config::default() };
+        let found = detect(&env_for(&d.join("home"), &d), &cfg, &Config::default()).expect("no runtime is searched for the native runner");
+        assert_eq!(found.runner, "native");
+        assert_eq!(found.prefix, exe.parent().unwrap(), "the client folder stands in for the missing prefix");
+        assert!(!found.managed_prefix);
+        // the Wine runner still insists on a runtime
+        let wine = Config { client_exe: Some(exe), ..Config::default() };
+        assert!(matches!(detect(&env_for(&d.join("home"), &d), &wine, &Config::default()), Err(Problem::NoRuntime)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn native_installs_are_found_in_the_given_default_places_once_each() {
+        let d = tmp("nativeroots");
+        let a = d.join("Program Files (x86)").join("Funcom");
+        let exe = exe_of(&a.join("The Secret World"));
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"MZ").unwrap();
+        let found = find_native_installs(&[a.clone(), d.join("missing"), a.clone()]);
+        assert_eq!(found, vec![exe]);
+        assert!(find_native_installs(&[d.join("nothing")]).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn two_projects_are_reported_as_ambiguous_and_never_guessed() {
         let d = tmp("amb");
@@ -358,6 +409,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[cfg(unix)] // Wine runtime and prefix discovery; Windows has no Wine (detect() picks the native runner, tested in native tests)
     #[test]
     fn full_detection_uses_the_managed_prefix_inside_the_project_and_explains_choices() {
         let d = tmp("full");
@@ -372,6 +424,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[cfg(unix)] // Wine runtime and prefix discovery; Windows has no Wine (detect() picks the native runner, tested in native tests)
     #[test]
     fn explicit_configuration_wins_and_stale_cache_is_ignored() {
         let d = tmp("prio");
@@ -388,6 +441,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[cfg(unix)] // Wine runtime and prefix discovery; Windows has no Wine (detect() picks the native runner, tested in native tests)
     #[test]
     fn wineprefix_from_the_environment_counts_as_explicit() {
         let d = tmp("wpfx");
@@ -400,6 +454,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[cfg(unix)] // Wine runtime and prefix discovery; Windows has no Wine (detect() picks the native runner, tested in native tests)
     #[test]
     fn nothing_found_gives_understandable_messages() {
         let d = tmp("none");
@@ -413,6 +468,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[cfg(unix)] // Wine runtime and prefix discovery; Windows has no Wine (detect() picks the native runner, tested in native tests)
     #[test]
     fn the_cache_is_written_once_and_never_overrides_explicit_values() {
         let d = tmp("cache");
@@ -440,6 +496,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)] // Wine runtime and prefix discovery; Windows has no Wine (detect() picks the native runner, tested in native tests)
     #[test]
     fn an_installation_made_by_the_installation_manager_is_found_with_its_own_prefix() {
         let d = std::env::temp_dir().join(format!("tsw-discover-base-{}", std::process::id()));
@@ -456,6 +513,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[cfg(unix)] // Wine runtime and prefix discovery; Windows has no Wine (detect() picks the native runner, tested in native tests)
     #[test]
     fn runtimes_are_found_in_the_launchers_own_folder_and_at_the_host_steam_path_without_duplicates() {
         let d = std::env::temp_dir().join(format!("tsw-discover-rt-{}", std::process::id()));

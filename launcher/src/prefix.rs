@@ -1,7 +1,7 @@
 //! Wine prefix manager: creates and verifies the prefix the original client runs in.
 //!
 //! What is installed, and why (each item verified with Wine `+loaddll` traces of the 32-bit DX11 client, see
-//! the original component measurements):
+//! documentation/third-party-components.md):
 //!
 //! * DXVK `d3d11.dll` and `dxgi.dll` (x86_64 -> `system32`, i386 -> `syswow64`): the client loads exactly these two.
 //!   They only take effect together with the load-order override `d3d11,dxgi=n,b` ([`dll_overrides`]).
@@ -9,8 +9,8 @@
 //!   D3DX/DirectDraw side loads, imports them. Without them the client dies with `c0000135`.
 //! * Nothing else by default: no `d3d9` (in every traced run only the `dxdiag` helper process loads it, never the client
 //!   process itself; adding DXVK `d3d9`+`d3d10core`, which Proton installs by default, changed no measured value, see
-//!   the original component measurements), no `d3dcompiler`/`d3dx` replacements. That is the current state, not a promise: the retained
-//!   ClientLog of a played session shows Wine's built-in HLSL compiler failing for the model shaders (the original component measurements).
+//!   documentation/third-party-components.md), no `d3dcompiler`/`d3dx` replacements. That is the current state, not a promise: the retained
+//!   ClientLog of a played session shows Wine's built-in HLSL compiler failing for the model shaders (documentation/third-party-components.md).
 //!
 //! The overrides the client runs with are data, not code: the prefix manifest lists them (`dll_overrides=`) together with
 //! the MD5 of every installed component. [`dll_overrides`] hands out only a *validated* manifest value, and [`check`]
@@ -282,7 +282,7 @@ pub struct NativeProfile {
     pub files: &'static [NativeFile],
 }
 
-/// UNCONFIRMED HYPOTHESIS (see the original component measurements): V6 (native `d3dcompiler_47`, `d3dx9_43`,
+/// UNCONFIRMED HYPOTHESIS (see documentation/third-party-components.md): V6 (native `d3dcompiler_47`, `d3dx9_43`,
 /// `d3dx11_43`; reaches the world, outfit black) plus the one DLL that every correctly rendering run had native and every black run
 /// had builtin: `d3dcompiler_43` (Direct3D reflection, and the compiler behind native `d3dx11_43`).
 pub const PROFILE_D3D_NATIVE_V7: NativeProfile = NativeProfile {
@@ -299,7 +299,7 @@ pub const PROFILE_D3D_NATIVE_V7: NativeProfile = NativeProfile {
 /// Lutris's own `d3d_extras` runtime links into its working prefix - byte-identical (same size and MD5) to the files of V7 and to those inside
 /// Microsoft's DirectX June 2010 redistributable, from which [`crate::dxredist`] obtains them. Differs from V7 only by NOT overriding
 /// `d3dcompiler_47` (the Lutris reference does not override it either; V7 itself documents it as optional). UNCONFIRMED as a replacement of V7
-/// until a visual test on a fresh prefix shows correct character clothing (the original component measurements).
+/// until a visual test on a fresh prefix shows correct character clothing (documentation/third-party-components.md).
 pub const PROFILE_D3D_NATIVE_MS2010: NativeProfile = NativeProfile {
     id: "d3d-native-ms2010",
     files: &[
@@ -637,7 +637,8 @@ fn run_init(prefix: &Path, wine: &Path, sink: &dyn Sink) -> Result<PathBuf, Stri
     Ok(path)
 }
 
-#[cfg(test)]
+// the Wine prefix manager is not used on Windows (no prefix there); its tests run on Linux
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

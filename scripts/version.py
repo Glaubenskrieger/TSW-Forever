@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Version tool of TSW-Forever (numeric MAJOR.MINOR.PATCH policy). Reads and writes only files of this workspace; no Git, no network.
+"""Version tool of TSW-Forever (policy: documentation/versioning-policy.md). Reads and writes only files of this workspace; no Git, no network.
 
   version.py show                 print APP_VERSION (the one line CI reads)
-  version.py check                every place that carries the application version agrees; all crate versions are numeric
+  version.py check                every place that carries the application version agrees; the independent components are valid SemVer
   version.py set <version> [--date YYYY-MM-DD]   change APP_VERSION in project.conf, both Cargo.toml/Cargo.lock entries and the metainfo release
-  version.py final                exit 0 only if APP_VERSION has the required numeric form
-  version.py valid <version>      exit 0 only for MAJOR.MINOR.PATCH
-  version.py compare <a> <b>      print -1, 0 or 1 for two numeric versions
+  version.py final                exit 0 only if APP_VERSION is a final version (no pre-release part)
+  version.py valid <version>      exit 0 if it is a SemVer 2.0.0 version
+  version.py compare <a> <b>      print -1, 0 or 1 (SemVer precedence; build metadata is ignored)
   version.py component <name>     print the version of an independent component: patch-engine | rdb
 
 Three version axes that must never be mixed up: the APPLICATION version (launcher/GUI/Flatpak), the ENGINE version (crate tsw-patch) and the
@@ -57,6 +57,13 @@ def compare(a, b):
     return 0 if len(ap) == len(bp) else (-1 if len(ap) < len(bp) else 1)
 
 
+def phase_ok(v):
+    """Project rule (documentation/versioning-policy.md): application and component versions are plain `MAJOR.MINOR.PATCH`; no alpha, beta, rc, dev
+    or build-metadata suffix. The SemVer parser above stays complete so that historical strings can still be compared."""
+    major, minor, patch, pre, build = parse(v)
+    return not pre and build is None
+
+
 def is_prerelease(v):
     return bool(parse(v)[3])
 
@@ -95,10 +102,6 @@ def metainfo_release(root=ROOT):
     return (m[1], m[2]) if m else (None, None)
 
 
-def numeric_version(v):
-    return re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", v) is not None
-
-
 def check(root=ROOT):
     """Return a list of problems (empty = consistent)."""
     errs = []
@@ -107,8 +110,8 @@ def check(root=ROOT):
         parse(app)
     except (KeyError, ValueError) as e:
         return [str(e)]
-    if not numeric_version(app):
-        errs.append(f"APP_VERSION {app}: use MAJOR.MINOR.PATCH without a suffix")
+    if not phase_ok(app):
+        errs.append(f"APP_VERSION {app}: must be plain MAJOR.MINOR.PATCH without suffix (documentation/versioning-policy.md)")
     for rel, crate in APP_CRATES.items():
         v = toml_version(rel, root)
         if v != app:
@@ -128,8 +131,8 @@ def check(root=ROOT):
     eng = toml_version(ENGINE_TOML, root)
     try:
         parse(eng)
-        if not numeric_version(eng):
-            errs.append(f"{ENGINE_TOML}: use MAJOR.MINOR.PATCH without a suffix")
+        if not phase_ok(eng):
+            errs.append(f"{ENGINE_TOML}: {eng} must be plain MAJOR.MINOR.PATCH without suffix")
     except ValueError as e:
         errs.append(f"{ENGINE_TOML}: {e}")
     for rel, crate in ENGINE_LOCKS.items():
@@ -152,8 +155,8 @@ def check(root=ROOT):
 
 def set_version(new, date=None, root=ROOT):
     parse(new)
-    if not numeric_version(new):
-        raise ValueError(f"{new}: use MAJOR.MINOR.PATCH without a suffix")
+    if not phase_ok(new):
+        raise ValueError(f"{new}: must be plain MAJOR.MINOR.PATCH without suffix")
     date = date or datetime.date.today().isoformat()
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
         raise ValueError(f"bad date {date!r}")
@@ -190,13 +193,10 @@ def main(argv):
             set_version(argv[2], date)
             print(f"APP_VERSION set to {argv[2]}; run `cargo build` in launcher/ and launcher-gui/ if a lock file complains, then `version.py check`")
         elif cmd == "final":
-            return 0 if numeric_version(conf_value("APP_VERSION")) else 1
+            return 0 if not is_prerelease(conf_value("APP_VERSION")) else 1
         elif cmd == "valid" and len(argv) == 3:
-            if not numeric_version(argv[2]):
-                raise ValueError("use MAJOR.MINOR.PATCH without a suffix")
+            parse(argv[2])
         elif cmd == "compare" and len(argv) == 4:
-            if not numeric_version(argv[2]) or not numeric_version(argv[3]):
-                raise ValueError("use MAJOR.MINOR.PATCH without a suffix")
             print(compare(argv[2], argv[3]))
         elif cmd == "component" and len(argv) == 3 and argv[2] in ("patch-engine", "rdb"):
             print(toml_version(ENGINE_TOML if argv[2] == "patch-engine" else RDB_TOML))

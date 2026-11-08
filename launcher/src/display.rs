@@ -98,7 +98,38 @@ fn environment_modes() -> Option<Vec<(u32, u32)>> {
     Some(normalize(sizes))
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Resolutions the Windows list is made of (the ones at most as large as the current desktop). Windows is not asked for the monitor's full mode list
+/// (that needs native calls); the client itself accepts only modes the graphics driver supports and keeps its saved mode otherwise.
+pub const COMMON_MODES: [(u32, u32); 13] =
+    [(1280, 720), (1280, 800), (1366, 768), (1440, 900), (1600, 900), (1680, 1050), (1920, 1080), (1920, 1200), (2560, 1080), (2560, 1440), (2560, 1600), (3440, 1440), (3840, 2160)];
+
+/// The modes offered on Windows: the current desktop mode and every common mode that fits into it, largest first.
+pub fn windows_modes(current: (u32, u32)) -> Vec<(u32, u32)> {
+    normalize(COMMON_MODES.iter().copied().filter(|&(w, h)| w <= current.0 && h <= current.1).chain(std::iter::once(current)))
+}
+
+/// The WMI query for the current resolution of the active video controllers (physical pixels, not the scaled desktop size).
+pub const WINDOWS_MODE_SCRIPT: &str = "Get-CimInstance Win32_VideoController | ForEach-Object { '{0}x{1}' -f $_.CurrentHorizontalResolution,$_.CurrentVerticalResolution }";
+
+/// The largest valid `WxH` line of the query output (inactive controllers print `x`).
+pub fn parse_windows_mode(text: &str) -> Option<(u32, u32)> {
+    text.lines().filter_map(parse_mode).max_by_key(|&(w, h)| u64::from(w) * u64::from(h))
+}
+
+#[cfg(windows)]
+fn environment_modes() -> Option<Vec<(u32, u32)>> {
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("powershell")
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_MODE_SCRIPT])
+        .stdin(std::process::Stdio::null())
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    parse_windows_mode(&String::from_utf8_lossy(&out.stdout)).map(windows_modes)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
 fn environment_modes() -> Option<Vec<(u32, u32)>> {
     None
 }
@@ -133,6 +164,20 @@ pub fn game_desktop(selected: Option<(u32, u32)>, modes: &[(u32, u32)], wine: bo
 #[cfg(test)]
 mod resolution_tests {
     use super::*;
+    #[test]
+    fn windows_offers_the_current_mode_and_the_common_ones_that_fit() {
+        assert_eq!(windows_modes((1920, 1080)), [(1920, 1080), (1680, 1050), (1600, 900), (1440, 900), (1366, 768), (1280, 800), (1280, 720)]);
+        assert_eq!(windows_modes((1920, 1200)).first(), Some(&(1920, 1200)));
+        assert!(windows_modes((1920, 1200)).contains(&(1920, 1080)));
+        assert_eq!(windows_modes((2000, 1111)).first(), Some(&(2000, 1111)), "an unusual current mode is offered as it is");
+        assert!(windows_modes((3840, 2160)).contains(&(3840, 2160)));
+    }
+    #[test]
+    fn the_wmi_output_picks_the_largest_active_controller_and_ignores_empty_ones() {
+        assert_eq!(parse_windows_mode("x\r\n2560x1440\r\n1920x1080\r\n"), Some((2560, 1440)));
+        assert_eq!(parse_windows_mode("x\nx\n"), None);
+        assert_eq!(parse_windows_mode(""), None);
+    }
     #[test]
     fn modes_are_valid_unique_and_sorted_without_inventing_resolutions() {
         assert_eq!(normalize([(1920, 1080), (0, 0), (1920, 1080), (3840, 2160), (1280, 720), (20000, 1080)]), [(3840, 2160), (1920, 1080), (1280, 720)]);

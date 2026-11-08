@@ -6,7 +6,7 @@
 //! caller keeps the text field, so nothing depends on it.
 //!
 //! The only data that leaves the program is the dialog title. UNVERIFIED against a running portal in the Flatpak sandbox (the pure parts below
-//! are unit-tested); see the Flatpak manifest.
+//! are unit-tested); see documentation/packaging.md.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -50,6 +50,10 @@ pub fn request_path(unique_name: &str, token: &str) -> String {
 
 /// Show the portal's dialog and wait for the answer. `Ok(None)` = the user cancelled. Blocks: call it from a worker thread.
 pub fn pick(title: &str, directory: bool) -> Result<Option<PathBuf>, String> {
+    // native Windows: Windows' own dialog (there is no D-Bus session bus and no sandbox)
+    if cfg!(windows) {
+        return tsw_launch::winnative::pick(title, directory);
+    }
     futures_lite::future::block_on(pick_async(title, directory))
 }
 

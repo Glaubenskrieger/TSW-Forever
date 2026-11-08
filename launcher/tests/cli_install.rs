@@ -16,15 +16,12 @@ impl Home {
         Home { root }
     }
     fn run(&self, args: &[&str]) -> (i32, String, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_tsw-launch"))
-            .arg("install")
-            .args(args)
-            .env("HOME", self.root.join("home"))
-            .env("XDG_CONFIG_HOME", self.root.join("cfg"))
-            .env_remove("TSW_LAUNCH_CONFIG")
-            .env("PATH", self.root.join("emptybin"))
-            .output()
-            .unwrap();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_tsw-launch"));
+        cmd.arg("install").args(args).env("HOME", self.root.join("home")).env("XDG_CONFIG_HOME", self.root.join("cfg")).env_remove("TSW_LAUNCH_CONFIG").env("PATH", self.root.join("emptybin"));
+        // native Windows keeps its settings in %APPDATA%	sw-forever (Known Folder), not in XDG_CONFIG_HOME: name the private file explicitly
+        #[cfg(windows)]
+        cmd.env("TSW_LAUNCH_CONFIG", self.config());
+        let out = cmd.output().unwrap();
         (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
     }
     fn base(&self) -> PathBuf {
@@ -35,6 +32,7 @@ impl Home {
     }
 }
 
+#[cfg(unix)] // Linux install layout (HOME/Games, Wine prefix); the Windows layout is covered by install::native_tests
 #[test]
 fn status_prepare_and_import_walk_through_the_early_steps_and_unsafe_bases_are_refused() {
     let h = Home::new("walk");
@@ -124,12 +122,14 @@ fn game_files(h: &Home) -> PathBuf {
     game
 }
 
+#[cfg(unix)]
 fn patcher_log(downloading: u32, roothash_new: &str) -> String {
     format!(
         "[t] [ID:0] [Main] Patcher exe hash is ab\n[t] [ID:0] [LocalRDBSource] New resources: 0 0.00 MB\n[t] [ID:0] [LocalRDBSource] Changed resources: 0 0.00 MB\n[t] [ID:0] [LocalRDBSource] Changed source hash resources: 0 0.00 MB\n[t] [ID:0] [LocalRDBSource] Deleted resources: 0 0.00 MB\n[t] [ID:0] [LocalRDBSource] Old roothash: aa\n[t] [ID:0] [LocalRDBSource] New roothash: {roothash_new}\n[t] [ID:0] [RDBManager] Downloading new: {downloading} 0.00 MB\n[t] [ID:0] [RDBManager] Downloading changed: 0 0.00 MB\n[t] [ID:0] [RDBManager] Downloading patches: 0 0.00 MB\n"
     )
 }
 
+#[cfg(unix)] // Linux install layout (HOME/Games, Wine prefix); the Windows layout is covered by install::native_tests
 #[test]
 fn the_command_line_judges_the_installation_like_the_window_and_never_forces_a_completion() {
     let h = Home::new("gate");

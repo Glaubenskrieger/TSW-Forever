@@ -76,6 +76,26 @@ pub fn plan(root: &Path, m: &Manifest, installed: u64) -> Result<Plan, PatchErro
     Ok(Plan { actions })
 }
 
+/// Is a process with this id running? Linux: `/proc`. Windows (no `unsafe` here): `tasklist` filtered by id; if it cannot be asked, the answer is "alive",
+/// so an unknown state never lets a second updater run.
+#[cfg(not(windows))]
+fn pid_alive(pid: u32) -> bool {
+    Path::new(&format!("/proc/{pid}")).exists()
+}
+
+#[cfg(windows)]
+fn pid_alive(pid: u32) -> bool {
+    use std::os::windows::process::CommandExt;
+    if pid == 0 || pid > 0x3FFF_FFFF {
+        return false; // not a process id Windows hands out (it also keeps tasklist away from absurd filters)
+    }
+    let out = std::process::Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).creation_flags(0x0800_0000).output();
+    match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")),
+        _ => true,
+    }
+}
+
 struct Lock(PathBuf);
 impl Lock {
     fn take(work: &Path) -> Result<Lock, PatchError> {
@@ -88,7 +108,7 @@ impl Lock {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     let pid: Option<u32> = fs::read_to_string(&p).ok().and_then(|t| t.trim().parse().ok());
-                    let alive = pid.is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists());
+                    let alive = pid.is_some_and(pid_alive);
                     if alive {
                         return Err(PatchError::Busy("another update is running".into()));
                     }
@@ -277,7 +297,9 @@ pub fn apply(root: &Path, work: &Path, m: &Manifest, fetch: &dyn Fetch, cancel: 
                 for c in &comps[..comps.len() - 1] {
                     dir.push(c);
                     if !root.join(&dir).exists() {
-                        journal_add(work, &format!("mkdir {}", dir.to_string_lossy()))?;
+                        // always `/`: the journal is read back through validate_rel, which refuses a backslash
+                        let rel_dir = dir.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
+                        journal_add(work, &format!("mkdir {rel_dir}"))?;
                         fs::create_dir(root.join(&dir)).map_err(|e| io("cannot create a folder", e))?;
                     }
                 }

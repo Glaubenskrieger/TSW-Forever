@@ -1,6 +1,6 @@
 [package]
 name = "tsw-launch"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Proof-of-concept launcher for the original The Secret World client (Linux and Windows)"
 license = "GPL-3.0-or-later"

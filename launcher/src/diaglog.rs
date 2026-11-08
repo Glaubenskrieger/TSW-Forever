@@ -104,7 +104,8 @@ fn private_file(path: &Path) -> std::io::Result<File> {
 }
 #[cfg(not(unix))]
 fn private_file(path: &Path) -> std::io::Result<File> {
-    File::create(path)
+    // create_new: an existing log is never truncated or overwritten (File::create would do exactly that)
+    std::fs::OpenOptions::new().write(true).create_new(true).open(path)
 }
 
 /// Keep only the newest `keep` launches (`launch-*.log` and the `dxvk-*` folder of the same stamp). Only entries this module created are touched.

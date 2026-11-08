@@ -40,11 +40,25 @@ cmd_fetch() {
 cmd_test() {
   need cargo "install a Rust toolchain"; need python3 "needed for the policy checks"
   python3 -I "$root/scripts/check_licenses.py"
+  python3 -I "$root/scripts/test_check_licenses.py"
+  python3 -I "$root/scripts/test_check_public_source.py"
   (cd "$root/patcher" && cargo test --offline --locked)
   (cd "$root/launcher" && cargo test --offline --locked)
   (cd "$root/launcher-gui" && cargo test --offline --locked)
+  python3 -I "$root/scripts/test_check_flatpak_package.py"
   python3 -I "$root/scripts/version.py" check
-  cmd_check
+  python3 -I -W ignore "$root/scripts/test_version.py"
+  python3 -I "$root/scripts/check_flatpak_package.py" workflow "$root/.github/workflows/flatpak.yml" "$manifest"
+  python3 -I "$root/scripts/check_flatpak_package.py" release-workflow "$root/.github/workflows/release-flatpak.yml" "$manifest"
+  python3 -I "$root/scripts/check_flatpak_package.py" rc-workflow "$root/.github/workflows/rc-artifacts.yml" "$manifest"
+  python3 -I "$root/scripts/check_flatpak_package.py" ci-policy "$root/.github/workflows" "$manifest"
+  python3 -I "$root/scripts/test_flatpak_channel.py"
+  python3 -I "$root/scripts/test_check_release_artifacts.py"
+  python3 -I "$root/scripts/test_check_release_set.py"
+  python3 -I "$root/scripts/test_install_native.py"
+  python3 -I "$root/scripts/test_native_stage.py"
+  python3 -I "$root/scripts/test_distribution_policy.py"
+  python3 -I "$root/scripts/test_ci_disk_report.py"
 }
 
 cmd_stage() {

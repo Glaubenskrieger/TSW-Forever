@@ -29,7 +29,7 @@ usage: tsw-launch [--config <file>] [--exe <TheSecretWorld[DX11].exe>] [options]
   --dx9 | --dx11       render path flag passed to the client (default: --dx11)
   --no-console         pass -noconsole
   --virtual-desktop WxH  run the client inside Wine's virtual desktop of that size (compatibility mode, wine runners only;
-                       works around a message loop with real full-screen X11 windows, see the original development measurements)
+                       works around a message loop with real full-screen X11 windows, see documentation/architecture.md)
   --resolution WxH     set the client's DisplayResolution preference (default with --virtual-desktop: its size)
   --skip-intro | --play-intro   pass the client's own -novideo switch (skips the start-up videos) or not (overrides the config)
   --detach             start the client and exit at once (exit code 0 = started); the client keeps running on its own,
@@ -225,13 +225,15 @@ fn resolve(cli: &Cli) -> Result<Settings, LaunchError> {
         tsw_launch::display::system_primary_mode(),
     )
     .map_err(LaunchError::Usage)?;
-    let game_desktop = tsw_launch::display::game_desktop(
-        cfg.game_resolution,
-        &if cfg.game_resolution.is_some() { tsw_launch::display::available_modes() } else { Vec::new() },
-        matches!(Runner::from_spec(Some(found.runner.as_str()), None), Runner::Wine { .. }),
-        plan.is_some(),
-    )
-    .map_err(LaunchError::Usage)?;
+    let wine_runner = matches!(Runner::from_spec(Some(found.runner.as_str()), None), Runner::Wine { .. });
+    // Wine: the chosen size becomes a private Wine desktop. Native Windows has no such desktop: the same choice is written to the client's own preferences.
+    let game_desktop = if wine_runner {
+        tsw_launch::display::game_desktop(cfg.game_resolution, &if cfg.game_resolution.is_some() { tsw_launch::display::available_modes() } else { Vec::new() }, true, plan.is_some())
+            .map_err(LaunchError::Usage)?
+    } else {
+        None
+    };
+    let native_resolution = if wine_runner { None } else { cfg.game_resolution };
     let legacy_desktop = if legacy_display { cfg.virtual_desktop } else { None };
     let legacy_resolution = if legacy_display { cfg.resolution } else { None };
     let virtual_desktop = game_desktop.or(cli.virtual_desktop).or(legacy_desktop);
@@ -261,7 +263,12 @@ fn resolve(cli: &Cli) -> Result<Settings, LaunchError> {
         fps_hud: cli.fps_hud.or(cfg.fps_hud).unwrap_or(false),
         diag: cli.diag.or(cfg.diagnostics).unwrap_or_default(),
         // Explicit private game desktop > legacy explicit options; no automatic monitor-size override.
-        resolution: tsw_launch::display::launch_resolution(game_desktop, plan.as_ref().map(|p| p.size), cli.resolution.or(legacy_resolution), cli.virtual_desktop.or(legacy_desktop)),
+        resolution: tsw_launch::display::launch_resolution(
+            game_desktop.or(native_resolution),
+            plan.as_ref().map(|p| p.size),
+            cli.resolution.or(legacy_resolution),
+            cli.virtual_desktop.or(legacy_desktop),
+        ),
         suppress_driver_warning: !cli.keep_driver_warning && cfg.suppress_driver_warning.unwrap_or(true),
     })
 }
@@ -341,6 +348,11 @@ fn run_checks(s: &Settings) -> Vec<Finding> {
     let exe = s.exe.clone().unwrap_or_default();
     let has_display = std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
     let mut f = doctor::check_all(&exe, &s.runner, s.prefix.as_deref(), &doctor::default_dirs(), std::env::var_os("PATH").as_deref(), has_display);
+    if matches!(s.runner, Runner::Native) {
+        // native Windows: no Wine prefix, Gamescope or DXVK shader cache; the Direct3D libraries are the only extra check
+        f.extend(doctor::check_directx(&tsw_launch::winnative::directx_missing_now()));
+        return f;
+    }
     if let (Runner::Wine { wine, .. }, Some(prefix)) = (&s.runner, s.prefix.as_deref()) {
         if prefix.join("user.reg").is_file() {
             let wine = doctor::find_program(wine, std::env::var_os("PATH").as_deref()).unwrap_or_else(|| wine.clone());
@@ -739,7 +751,7 @@ fn patch_before_start(exe: &Path, cli: &Cli) {
 /// The window-manager decoration switch for the game process (Alt+Tab fix, see `windowing.rs`), if it applies.
 fn window_decorations_env(s: &Settings, env: &[(String, String)]) -> Option<(&'static str, &'static str)> {
     let wine = matches!(s.runner, Runner::Wine { .. });
-    let display_mode = s.display_mode.or_else(|| s.prefix.as_deref().and_then(|p| prefs::read_display_mode(&prefs::wine_prefs_dir(p))));
+    let display_mode = s.display_mode.or_else(|| prefs_dir(s).and_then(|d| prefs::read_display_mode(&d)));
     tsw_launch::windowing::env_to_set(
         s.wm_decorations,
         tsw_launch::windowing::Context {

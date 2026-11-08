@@ -234,8 +234,38 @@ impl Catalog {
 pub fn resolve(setting: Option<&str>, env: &dyn Fn(&str) -> Option<String>) -> &'static str {
     match setting.map(str::trim) {
         Some(s) if !s.is_empty() && s != "auto" => supported(s).unwrap_or(FALLBACK),
-        _ => from_locale(env),
+        _ => system_language(env),
     }
+}
+
+/// The language of the system: on Windows the display language (asked from Windows; a Windows program has no `LANG`), elsewhere the locale variables.
+/// An unsupported language gives the fallback (English).
+fn system_language(env: &dyn Fn(&str) -> Option<String>) -> &'static str {
+    // an explicitly set locale variable (e.g. in a shell) wins; a normal Windows program has none and follows the display language
+    #[cfg(windows)]
+    if ["LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"].iter().all(|v| env(v).is_none_or(|s| s.is_empty())) {
+        if let Some(tag) = windows_display_language() {
+            return supported(&tag).unwrap_or(FALLBACK);
+        }
+    }
+    from_locale(env)
+}
+
+/// The Windows display language as a locale name (`de-DE`), from `GetUserDefaultUILanguage` and `LCIDToLocaleName`.
+#[cfg(windows)]
+fn windows_display_language() -> Option<String> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetUserDefaultUILanguage() -> u16;
+        fn LCIDToLocaleName(locale: u32, name: *mut u16, len: i32, flags: u32) -> i32;
+    }
+    let mut buf = [0u16; 85]; // LOCALE_NAME_MAX_LENGTH
+                              // SAFETY: `buf` is a writable buffer of the length passed; Windows writes a NUL-terminated name into it and returns the number of characters (0 = error).
+    let n = unsafe {
+        let id = GetUserDefaultUILanguage();
+        LCIDToLocaleName(u32::from(id), buf.as_mut_ptr(), buf.len() as i32, 0)
+    };
+    (n > 1).then(|| String::from_utf16_lossy(&buf[..(n as usize - 1)]))
 }
 
 /// `de_DE.UTF-8` / `de-AT` / `de` → `de`, if that language is available.
@@ -302,6 +332,21 @@ mod tests {
         assert_eq!(from_locale(&env(&[("LC_ALL", "C"), ("LANG", "de_DE.UTF-8")])), "en", "the C locale means no translation");
         assert_eq!(from_locale(&env(&[])), "en");
         assert_eq!(from_locale(&env(&[("LANG", "de_AT@euro")])), "de");
+    }
+
+    #[test]
+    fn windows_locale_names_select_the_language_with_english_as_the_fallback() {
+        for (tag, lang) in [("de-DE", "de"), ("de-AT", "de"), ("de-CH", "de"), ("en-US", "en"), ("en-GB", "en"), ("fr-FR", ""), ("ja-JP", ""), ("pt-BR", "")] {
+            assert_eq!(supported(tag).unwrap_or(FALLBACK), if lang.is_empty() { "en" } else { lang }, "{tag}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_names_its_display_language() {
+        let tag = windows_display_language().expect("Windows answers");
+        assert!(tag.len() >= 2 && tag.chars().next().unwrap().is_ascii_alphabetic(), "{tag}");
+        assert!(LANGUAGES.iter().any(|(c, _, _)| *c == resolve(None, &|_| None)));
     }
 
     #[test]

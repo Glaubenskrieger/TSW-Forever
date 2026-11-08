@@ -8,7 +8,7 @@
 //!
 //! The pin: size and SHA-256 were measured on 2026-10-31 from the release asset `GE-Proton11-11-x86_64.tar.gz` of
 //! <https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-11> and agree with the `sha512sum` file and the digest that
-//! GitHub shows for the asset (the original component measurements). A new runner version is a deliberate code change with a new pin.
+//! GitHub shows for the asset (documentation/third-party-components.md). A new runner version is a deliberate code change with a new pin.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -151,7 +151,7 @@ fn run(runtimes: &Path, runner: &Runner, consent: bool, tar: &Path, dl: &Downloa
     Ok(target)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;

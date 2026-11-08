@@ -44,6 +44,17 @@ impl Finding {
     }
 }
 
+/// Native Windows: the Direct3D libraries the client loads that are missing from the system folders. A warning only: the original installer or the user can
+/// add them, and nothing is downloaded by the launcher.
+pub fn check_directx(missing: &[&str]) -> Vec<Finding> {
+    match crate::winnative::directx_runtime(missing) {
+        None => vec![Finding::ok("the Direct3D libraries of the DirectX June 2010 runtime are present".to_string()).coded("doctor.directx_ok", Vec::<String>::new())],
+        Some(message) => {
+            vec![Finding::bad(Level::Warn, message, "install Microsoft's DirectX End-User Runtimes (June 2010) yourself").coded("doctor.directx_missing", missing.iter().map(|m| m.to_string()))]
+        }
+    }
+}
+
 /// Standard multilib directories of common distributions.
 /// (`/app/lib/i386-linux-gnu` is where a Flatpak mounts the 32-bit compatibility extension.)
 pub const LIB32_DIRS: &[&str] = &["/usr/lib32", "/usr/lib/i386-linux-gnu", "/lib32", "/usr/lib/i686-linux-gnu", "/app/lib/i386-linux-gnu"];
@@ -91,7 +102,7 @@ pub fn check_32bit_fonts(dirs: &[PathBuf]) -> Vec<Finding> {
 /// 32-bit X11 libraries that Wine's 32-bit `winex11.so` loads with `dlopen` (list read from the driver's strings).
 /// Verified consequence of a missing `libXi`: `warn:cursor:grab_clipping_window XInput2 not supported, refusing to clip`
 /// repeated ~15,000 times per second; for a full-screen window the client then spins in a message loop and never starts
-/// the engine (the original development measurements). The other libraries are needed for display modes, cursors, etc.
+/// the engine (documentation/architecture.md). The other libraries are needed for display modes, cursors, etc.
 pub const X11_LIBS: &[(&str, &str, &str)] = &[
     ("libXi.so.6", "lib32-libxi (Debian: libxi6:i386)", "XInput2: without it Wine refuses cursor clipping and a full-screen client spins in a message loop"),
     ("libXrandr.so.2", "lib32-libxrandr (Debian: libxrandr2:i386)", "display mode changes (ChangeDisplaySettings) fail"),
@@ -122,7 +133,15 @@ pub fn find_program(program: &Path, path_var: Option<&std::ffi::OsStr>) -> Optio
     if program.components().count() > 1 || program.is_absolute() {
         return program.is_file().then(|| program.to_path_buf());
     }
-    std::env::split_paths(path_var?).map(|d| d.join(program)).find(|p| p.is_file())
+    std::env::split_paths(path_var?).find_map(|d| {
+        let plain = d.join(program);
+        if plain.is_file() {
+            return Some(plain);
+        }
+        // Windows programs carry `.exe` (`curl` is `curl.exe`); elsewhere the name is exact
+        let exe = (cfg!(windows) && program.extension().is_none()).then(|| d.join(format!("{}.exe", program.display())));
+        exe.filter(|p| p.is_file())
+    })
 }
 
 /// Everything a start needs. Pure inspection; `lib_dirs`/`path_var` are injectable for tests.
@@ -211,6 +230,34 @@ pub fn exit_code(findings: &[Finding]) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_program_name_finds_its_exe_on_windows_only() {
+        use super::find_program;
+        use std::path::Path;
+        let dir = std::env::temp_dir().join(format!("tsw-findprog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("curl.exe"), b"MZ").unwrap();
+        std::fs::write(dir.join("exact"), b"x").unwrap();
+        let path = std::env::join_paths([&dir]).unwrap();
+        assert_eq!(find_program(Path::new("curl"), Some(&path)).is_some(), cfg!(windows), "`curl` finds `curl.exe` on Windows, never elsewhere");
+        assert_eq!(find_program(Path::new("exact"), Some(&path)), Some(dir.join("exact")), "an exact name is always found");
+        assert!(find_program(Path::new("missing"), Some(&path)).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_direct3d_libraries_are_a_warning_never_a_failure() {
+        let ok = check_directx(&[]);
+        assert_eq!(ok.len(), 1);
+        assert_eq!(ok[0].level, Level::Ok);
+        let warn = check_directx(&["d3dx9_43.dll"]);
+        assert_eq!(warn[0].level, Level::Warn);
+        assert!(warn[0].what.contains("d3dx9_43.dll") && warn[0].what.contains("does not download"));
+        assert_eq!(exit_code(&warn), 4, "a warning has its own exit code and is not the failure code");
+        assert_ne!(exit_code(&warn), exit_code(&[Finding::bad(Level::Fail, "x".into(), "")]));
+    }
+
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {

@@ -351,13 +351,77 @@ def _triggers(doc):
     return on or {}
 
 
+OWNER_GUARD_PARTS = ("github.actor == github.repository_owner", "github.triggering_actor == github.repository_owner", "github.event_name == 'push'", "github.ref_type == 'tag'")
+RELEASE_ASSETS = ("tsw-forever-${version}.flatpak", "tsw-forever-${version}-src.tar.gz", "tsw-forever-${version}-windows-setup.exe", "dist/SHA256SUMS")
+
+
+def check_tag_release_workflow(doc):
+    """The single tag-triggered release workflow (release.yml): started only by an owner-pushed numeric version tag, it builds the combined set through
+    release-set.yml from the tagged commit and publishes exactly four files through a draft. Only the publish job may write; no secrets, no inputs."""
+    errs = []
+    trig = _triggers(doc)
+    text = repr(doc)
+    if list(trig) != ["push"] or list((trig.get("push") or {})) != ["tags"] or list((trig["push"]["tags"])) != ["v*.*.*"]:
+        errs.append("release.yml: the only trigger is push of tags v*.*.* (no branch, no manual start, no free input)")
+    if "write" in repr(doc.get("permissions")) or str((doc.get("permissions") or {})) != "{'contents': 'read'}":
+        errs.append("release.yml: the workflow-level permissions must be exactly contents: read")
+    if re.search(r"secrets\.|git push|git tag|create-release|action-gh-release", text):
+        errs.append("release.yml: no secrets, no push, no tag creation, no third-party release action")
+    jobs = doc.get("jobs") or {}
+    if sorted(jobs) != ["guard", "publish", "set"]:
+        errs.append(f"release.yml: the jobs are exactly guard, set and publish (found {sorted(jobs)})")
+        return errs
+    for jname, job in jobs.items():
+        cond = str(job.get("if", ""))
+        for part in OWNER_GUARD_PARTS:
+            if part not in cond:
+                errs.append(f"release.yml: job {jname} lacks the guard part {part!r} (owner-pushed tag only)")
+        if jname != "publish" and "write" in repr(job.get("permissions")):
+            errs.append(f"release.yml: job {jname} must not have write permissions")
+    if jobs["set"].get("uses") != "./.github/workflows/release-set.yml":
+        errs.append("release.yml: the set job must call ./.github/workflows/release-set.yml (one build path for dry run and release)")
+    pub = jobs["publish"]
+    if sorted(pub.get("needs") or []) != ["guard", "set"]:
+        errs.append("release.yml: publish must need guard and set (a failed platform build must stop the release)")
+    if "write" not in repr((pub.get("permissions") or {}).get("contents")):
+        errs.append("release.yml: the publish job needs contents: write")
+    ptext = repr(pub)
+    for need, why in (
+        ("merge-base --is-ancestor", "check that the tagged commit is part of main"),
+        ("gh release view", "refuse an existing release"),
+        ("--draft --verify-tag", "create the release as a draft for an existing tag"),
+        ("gh release download", "download the uploaded assets again"),
+        ("sha256sum --check", "verify the checksums"),
+        ("--draft=false", "publish only after the verification"),
+        ("check_release_set.py", "re-check the exact release set"),
+        ("check_public_source.py", "re-audit the source archive"),
+        ("persist-credentials", "check out without stored credentials"),
+    ):
+        if need not in ptext:
+            errs.append(f"release.yml: publish must {why} ({need!r} missing)")
+    for asset in RELEASE_ASSETS:
+        if asset not in ptext:
+            errs.append(f"release.yml: the release asset {asset} is not uploaded")
+    if ptext.count("-eq 4") < 2:
+        errs.append("release.yml: the release has exactly four assets (checked before the upload and after the download)")
+    if "--clobber" in ptext or "gh release delete" in ptext:
+        errs.append("release.yml: an existing release or asset is never replaced or deleted")
+    if "--draft=false" in ptext and "gh release download" in ptext and ptext.index("--draft=false") < ptext.index("gh release download"):
+        errs.append("release.yml: the release is made public only after the download check")
+    for jname, job in jobs.items():
+        for st in job.get("steps") or []:
+            if "${{ github.event" in str(st.get("run", "")) or "${{ github.ref_name" in str(st.get("run", "")):
+                errs.append(f"release.yml: job {jname}: context values reach scripts through env:, never interpolated into a shell script")
+    return errs
+
+
 def check_ci_policy(workflows, manifest):
     """The build policy for ALL workflows: branches and pull requests are checked only; a full package or publication is possible from main only,
     cannot be started for another ref or a foreign commit, and the release has no free input. `workflows` = {file name: parsed YAML}."""
     import yaml  # noqa: F401  (imported by the caller; kept here to fail loudly when missing)
     errs = []
     names = set(workflows)
-    for need in ("ci.yml", "flatpak.yml", "release-flatpak.yml", "rc-artifacts.yml"):
+    for need in ("ci.yml", "flatpak.yml", "release-flatpak.yml", "rc-artifacts.yml", "windows.yml", "release-set.yml", "release.yml"):
         if need not in names:
             errs.append(f"missing workflow {need}")
     for name, doc in sorted(workflows.items()):
@@ -367,6 +431,9 @@ def check_ci_policy(workflows, manifest):
         for bad in ("pull_request_target", "workflow_run", "schedule", "release", "registry_package"):
             if bad in trig:
                 errs.append(f"{name}: trigger {bad} is not allowed")
+        if name == "release.yml":
+            errs += check_tag_release_workflow(doc)
+            continue
         push = trig.get("push") or {}
         if "push" in trig and (push.get("tags") or push.get("tags-ignore")):
             errs.append(f"{name}: no tag triggers (a tag must not start a build or a release)")
@@ -410,9 +477,34 @@ def check_ci_policy(workflows, manifest):
         elif name == "flatpak.yml":
             if "pages" in repr(doc.get("permissions")) or "secrets." in text:
                 errs.append("flatpak.yml: the build workflow has no publishing rights and no secrets")
+        elif name == "windows.yml":
+            if sorted(trig) != ["workflow_call", "workflow_dispatch"]:
+                errs.append("windows.yml: manual start (workflow_dispatch) or a call from the release-set workflow only: a push, a tag or a schedule must not start it")
+            if (trig.get("workflow_dispatch") or {}).get("inputs"):
+                errs.append("windows.yml: no inputs (no free ref, SHA or version)")
+            if "secrets." in text or "write" in repr(doc.get("permissions")):
+                errs.append("windows.yml: no secrets and no write permission (unsigned test build, nothing is published)")
+            for jname, job in (doc.get("jobs") or {}).items():
+                if "write" in repr(job.get("permissions")):
+                    errs.append(f"windows.yml: job {jname} must not have write permissions")
+                if not str(job.get("runs-on", "")).startswith("windows-"):
+                    errs.append(f"windows.yml: job {jname} must run on a Windows runner")
+        elif name == "release-set.yml":
+            if sorted(trig) != ["workflow_call", "workflow_dispatch"] or (trig.get("workflow_dispatch") or {}).get("inputs"):
+                errs.append("release-set.yml: manual start (workflow_dispatch, no inputs) or a call from release.yml only: a push or a tag must not start it")
+            if "secrets." in text or "write" in repr(doc.get("permissions")) or re.search(r"gh release|create-release|action-gh-release|git push|git tag", text):
+                errs.append("release-set.yml: no secrets, no write permission, no release, tag or push (the combined set is a workflow artifact only)")
+            jobs = doc.get("jobs") or {}
+            asm = jobs.get("assemble") or {}
+            if sorted(asm.get("needs") or []) != ["linux", "windows"]:
+                errs.append("release-set.yml: the assemble job must need exactly the linux and windows jobs (a failed platform must stop the set)")
+            if "needs.linux.result" not in repr(asm) or "needs.windows.result" not in repr(asm):
+                errs.append("release-set.yml: the assemble job must check that both platform results are success")
+            if "--with-windows" not in repr(asm):
+                errs.append("release-set.yml: the combined set must be verified with check_release_set.py --with-windows")
         elif name == "rc-artifacts.yml":
-            if list(trig) != ["workflow_dispatch"]:
-                errs.append("rc-artifacts.yml: manual start (workflow_dispatch) only: a tag or a push must not start it")
+            if sorted(trig) != ["workflow_call", "workflow_dispatch"]:
+                errs.append("rc-artifacts.yml: manual start (workflow_dispatch) or a call from release-set.yml only: a tag or a push must not start it")
             if (trig.get("workflow_dispatch") or {}).get("inputs"):
                 errs.append("rc-artifacts.yml: no inputs (no free ref, SHA or version)")
             if "secrets." in text or "write" in repr(doc.get("permissions")):

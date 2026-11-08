@@ -92,6 +92,7 @@ pub fn client_alive_below(root: u32, exe_name: &str) -> bool {
 }
 
 /// Signal processes by number through the shell built-in (no `unsafe`, no extra dependency; a Flatpak runtime has no `kill` program).
+#[cfg(target_os = "linux")]
 fn signal(sig: &str, pids: &[u32]) {
     if pids.is_empty() {
         return;
@@ -172,8 +173,10 @@ pub fn find_processes(names: &[&str], under: &Path) -> Vec<Running> {
 
 /// Without `/proc` nothing can be found.
 #[cfg(not(target_os = "linux"))]
-pub fn find_processes(_names: &[&str], _under: &Path) -> Vec<Running> {
-    Vec::new()
+pub fn find_processes(names: &[&str], _under: &Path) -> Vec<Running> {
+    // Native Windows: the programs are found by NAME (the original patcher and installer live in Program Files, not below the launcher's data folder, and
+    // no Wine installation shares the machine). Elsewhere the list is empty.
+    crate::winnative::list_processes(names).into_iter().map(|p| Running { pid: p.pid, started: p.started }).collect()
 }
 
 /// What can be read about a running process without touching it: does it have a thread called `thread_name`, and how many bytes did it write so far
@@ -215,7 +218,7 @@ where
     Ok(status)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

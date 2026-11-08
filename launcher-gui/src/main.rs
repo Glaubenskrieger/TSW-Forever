@@ -5,6 +5,8 @@
 //! Everything the window shows is derived from [`State`] by [`render`], in the current language. Messages are kept as
 //! [`i18n::Msg`] values (id + arguments), not as finished text, so changing the language redraws the whole window
 //! without a restart.
+// Windows: a normal GUI program without a console window (the command-line tool `tsw-launch.exe` keeps its console; diagnostics go to log files).
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
 mod i18n;
 mod messages;
@@ -52,12 +54,22 @@ struct View {
     needs_install: bool,
     /// Main button text in that mode.
     install_label: Option<Msg>,
+    /// Nothing is installed, nothing is running and no installer was chosen yet: Windows then offers the three ways to set the game up.
+    first_run: bool,
     /// One of Funcom's programs works and has not confirmed completion: the main button is disabled.
     install_waiting: bool,
     /// What the installation waits for (shown under the main button in that mode).
     install_hint: Option<Msg>,
-    /// Compact installation folder for the window (`~/Games/The Secret World`).
+    /// Compact installation folder for the window (`~/Games/The Secret World`); on Windows the folder of the GAME (never the launcher's own data folder).
     location: String,
+    /// Windows: the state of the game installation in words (not installed / found but not confirmed complete), and its kind (1 = needs attention).
+    install_state: Option<(Msg, i32)>,
+    /// Windows: every installation found on this computer (client executables) while none has been chosen yet.
+    detected: Vec<PathBuf>,
+    /// Windows: Direct3D libraries of the DirectX June 2010 runtime that are missing (file names).
+    directx_missing: Vec<String>,
+    /// Windows: existing installations the user chose to ignore ("install a new copy").
+    ignored: Vec<PathBuf>,
     /// A remark about an earlier layout that is only reported.
     install_notice: Option<Msg>,
 }
@@ -198,6 +210,27 @@ fn render(ui: &MainWindow, st: &State) {
     ui.set_install_main_label(sstr(st.view.install_label.as_ref().map(|m| cat.render(m)).unwrap_or_default()));
     ui.set_install_notice(sstr(st.view.install_notice.as_ref().map(|m| cat.render(m)).unwrap_or_default()));
     ui.set_install_waiting(st.view.install_waiting);
+    ui.set_first_run(st.view.first_run);
+    ui.set_ignored_text(sstr(if st.view.ignored.is_empty() {
+        String::new()
+    } else {
+        cat.render(&Msg::new("Ignored existing installation: {0}", [st.view.ignored.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("; ")]))
+    }));
+    ui.set_directx_text(sstr(if st.view.directx_missing.is_empty() {
+        String::new()
+    } else {
+        cat.render(&Msg::new(
+            "These Direct3D libraries of Microsoft's DirectX End-User Runtimes (June 2010) are missing on this computer: {0}. The original game needs them in their 32-bit form; without them it may not start or may show errors.",
+            [st.view.directx_missing.join(", ")],
+        ))
+    }));
+    ui.set_install_state(sstr(st.view.install_state.as_ref().map(|(m, _)| cat.render(m)).unwrap_or_default()));
+    ui.set_install_state_kind(st.view.install_state.as_ref().map_or(0, |(_, k)| *k));
+    let listed: Vec<slint::SharedString> = st.view.detected.iter().map(|p| p.display().to_string().into()).collect();
+    if slint::Model::row_count(&ui.get_detected_installs()) != listed.len() {
+        ui.set_detected_index(0);
+    }
+    ui.set_detected_installs(slint::ModelRc::new(slint::VecModel::from(listed)));
     ui.set_install_hint(sstr(st.view.install_hint.as_ref().map(|m| cat.render(m)).unwrap_or_default()));
     ui.set_patch_status(sstr(cat.render(&model::patch_notice())));
     ui.set_version_info(sstr(cat.render(&model::version_info())));
@@ -241,6 +274,11 @@ fn set_status(st: &mut State, msg: Msg, kind: i32) {
     st.view.status = Some((msg, kind));
 }
 
+/// Does the configuration name a client that may be used? A stored path of an old configuration does not count while the detection is paused.
+fn config_names_client(st: &State) -> bool {
+    tsw_launch::winnative::stored_paths_honored() && st.config.client_exe.as_ref().is_some_and(|p| p.is_file())
+}
+
 fn explicit(c: &Config) -> Config {
     Config { client_exe: c.client_exe.clone(), runner: c.runner.clone(), prefix: c.prefix.clone(), ..Config::default() }
 }
@@ -256,7 +294,11 @@ fn prepare_in_background(ui: &MainWindow, state: &Shared, refresh_prefix: bool) 
     let weak = ui.as_weak();
     let state = state.clone();
     std::thread::spawn(move || {
-        let detected = discover::resolve(&Env::from_process(), &explicit(&cfg), discover::cache_path().as_deref());
+        // while the automatic detection is paused (Windows) a stored path of an old configuration and the detection cache are not used
+        let honored = tsw_launch::winnative::stored_paths_honored();
+        let cfg = if honored { cfg } else { Config { client_exe: None, ..cfg } };
+        let cache = if honored { discover::cache_path() } else { None };
+        let detected = discover::resolve(&Env::from_process(), &explicit(&cfg), cache.as_deref());
         let d = match detected {
             Ok(d) => d,
             Err(problem) => {
@@ -403,7 +445,9 @@ fn open_logs(ui: &MainWindow, state: &Shared) {
 /// Create the reduced diagnostic package (through the CLI, one implementation) and show where it is.
 fn make_bundle(ui: &MainWindow, state: &Shared) {
     let mut st = state.lock().unwrap();
-    let out = std::process::Command::new(model::cli_binary()).args(["diag", "bundle", "--config"]).arg(&st.config_path).stdin(std::process::Stdio::null()).output();
+    let mut command = std::process::Command::new(model::cli_binary());
+    tsw_launch::winnative::no_window(&mut command);
+    let out = command.args(["diag", "bundle", "--config"]).arg(&st.config_path).stdin(std::process::Stdio::null()).output();
     st.view.message = Some(match out {
         Ok(o) if o.status.success() => Msg::new("Diagnostic package written: {0}. Read it before you share it; nothing was sent.", [String::from_utf8_lossy(&o.stdout).trim().to_string()]),
         Ok(o) => Msg::new("The diagnostic package could not be created: {0}", [tsw_launch::secrets::mask_text(String::from_utf8_lossy(&o.stderr).trim())]),
@@ -751,7 +795,8 @@ fn wire(ui: &MainWindow, state: &Shared, may_close: &Arc<AtomicBool>) {
             let (weak2, state2) = (weak.clone(), state.clone());
             let state_in = state2.clone();
             std::thread::spawn(move || {
-                let picked = portal::pick("TheSecretWorldDX11.exe", false);
+                // native Windows: the folder of the installation; Linux/Flatpak: the client file
+                let picked = if cfg!(windows) { portal::pick("The Secret World game folder", true) } else { portal::pick("TheSecretWorldDX11.exe", false) };
                 post(&weak2, &state2, move |ui, st| {
                     ui.set_busy(false);
                     match picked {
@@ -772,13 +817,124 @@ fn wire(ui: &MainWindow, state: &Shared, may_close: &Arc<AtomicBool>) {
         });
     }
     {
+        // Windows: "Install a new copy in another folder": the user picks an empty folder; every existing installation is ignored from then on (never changed) and
+        // the original installer is later started with exactly this folder
+        let (weak, state) = (ui.as_weak(), state.clone());
+        ui.on_install_new_copy(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_busy(true);
+            let (weak2, state2) = (weak.clone(), state.clone());
+            let state_in = state2.clone();
+            std::thread::spawn(move || {
+                let picked = portal::pick("New folder for The Secret World (empty)", true);
+                post(&weak2, &state2, move |ui, st| {
+                    ui.set_busy(false);
+                    match picked {
+                        Ok(Some(path)) => start_new_copy(ui, &state_in, st, path),
+                        Ok(None) => {}
+                        Err(e) => st.view.message = Some(Msg::new("The file dialog is not available: {0}.", [e])),
+                    }
+                });
+            });
+        });
+    }
+    {
+        let (weak, state) = (ui.as_weak(), state.clone());
+        ui.on_use_ignored_again(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut st = state.lock().unwrap();
+            st.install.use_ignored_again();
+            st.install.apply_search();
+            let _ = save_install_state(&st);
+            st.view.message = Some(Msg::plain("The ignored installation is visible to the launcher again."));
+            refresh_install(&ui, &state, &mut st);
+            render(&ui, &st);
+        });
+    }
+    {
+        // Windows: missing Direct3D libraries. The user decides: nothing is downloaded or started without this click.
+        let (weak, state) = (ui.as_weak(), state.clone());
+        ui.on_install_directx(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut st = state.lock().unwrap();
+            let layout = match model::install_layout(&ui.get_install_base(), home_dir().as_deref()) {
+                Ok(l) => l,
+                Err(m) => {
+                    st.view.message = Some(m);
+                    return render(&ui, &st);
+                }
+            };
+            let Some(curl) = doctor::find_program(Path::new("curl"), std::env::var_os("PATH").as_deref()) else {
+                st.view.message = Some(Msg::new("curl was not found. Download Microsoft's DirectX installer yourself from {0}", [tsw_launch::dxsetup::PAGE.to_string()]));
+                return render(&ui, &st);
+            };
+            st.install_cancel.store(false, std::sync::atomic::Ordering::SeqCst);
+            let cancel = st.install_cancel.clone();
+            ui.set_busy(true);
+            ui.set_install_downloading(true);
+            drop(st);
+            let (weak2, state2) = (weak.clone(), state.clone());
+            std::thread::spawn(move || {
+                let sink = install_sink(&weak2, &state2, Msg::plain("Microsoft's DirectX installer was downloaded and verified."));
+                // download, hash check, signature check - the installer is started only when all of them passed
+                let prepared = tsw_launch::dxsetup::fetch(&layout, &install::Downloader { curl: &curl, cancel: &cancel, sink: &sink })
+                    .map_err(|e| e.to_string())
+                    .and_then(|file| tsw_launch::dxsetup::verify_signature(&file).map(|()| file));
+                let started = prepared.and_then(|file| tsw_launch::launch::spawn_detached(&mut tsw_launch::dxsetup::start_command(&file), None).map(|_| ()).map_err(|e| e.to_string()));
+                post(&weak2, &state2, move |ui, st| {
+                    ui.set_busy(false);
+                    ui.set_install_downloading(false);
+                    st.view.progress = None;
+                    st.view.message = Some(match started {
+                        Ok(()) => Msg::plain("Microsoft's DirectX installer was started. Follow its steps (Windows may ask for permission), then click “Check again”."),
+                        Err(e) if e == install::InstallError::Cancelled.to_string() => Msg::plain("Cancelled. The partial download is kept and will be resumed."),
+                        Err(e) => {
+                            Msg::new("Microsoft's DirectX installer could not be prepared: {0}. It was not started. You can download it yourself from {1}", [e, tsw_launch::dxsetup::PAGE.to_string()])
+                        }
+                    });
+                    render(ui, st);
+                });
+            });
+        });
+    }
+    {
+        // Windows: look again after the DirectX installer ran
+        let (weak, state) = (ui.as_weak(), state.clone());
+        ui.on_recheck_directx(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut st = state.lock().unwrap();
+            st.view.directx_missing = tsw_launch::winnative::directx_missing_now().into_iter().map(String::from).collect();
+            st.view.message =
+                Some(if st.view.directx_missing.is_empty() { Msg::plain("All required DirectX libraries are present.") } else { Msg::new("Still missing: {0}", [st.view.directx_missing.join(", ")]) });
+            render(&ui, &st);
+        });
+    }
+    {
+        // Windows: the user picked one of several installations that were found; the choice is stored like any adopted installation
+        let (weak, state) = (ui.as_weak(), state.clone());
+        ui.on_use_detected(move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut st = state.lock().unwrap();
+            let Some(path) = usize::try_from(index).ok().and_then(|i| st.view.detected.get(i).cloned()) else { return };
+            match install::adopt(&path) {
+                Ok(exe) => {
+                    st.install.client_exe = Some(exe.clone());
+                    let _ = save_install_state(&st);
+                    adopt_into_config(&ui, &state, &mut st, install::Adoption { client_exe: exe, prefix: None });
+                }
+                Err(e) => install_failed(&mut st, e),
+            }
+            render(&ui, &st);
+        });
+    }
+    {
         // "Start the original patcher": it fetches and completes the game data and continues after an interruption
         let (weak, state) = (ui.as_weak(), state.clone());
         ui.on_install_patcher(move || {
             let Some(ui) = weak.upgrade() else { return };
             let mut st = state.lock().unwrap();
             let layout = model::install_layout(&ui.get_install_base(), home_dir().as_deref());
-            let Some(rt) = discover::find_runtimes(&Env::from_process()).into_iter().next() else {
+            let Some(rt) = wine_program() else {
                 st.view.message = Some(messages::problem(&discover::Problem::NoRuntime));
                 return render(&ui, &st);
             };
@@ -866,7 +1022,8 @@ fn wire(ui: &MainWindow, state: &Shared, may_close: &Arc<AtomicBool>) {
 // ---- INSTALLATION card -----------------------------------------------------------------------------------------------
 
 fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
+    // HOME on Linux; USERPROFILE on Windows
+    std::env::var_os("HOME").filter(|v| !v.is_empty()).or_else(|| std::env::var_os("USERPROFILE").filter(|v| !v.is_empty())).map(PathBuf::from)
 }
 
 /// Copy what the window shows into the persisted decisions (consent is for exactly the official address), without saving.
@@ -883,8 +1040,14 @@ fn read_install_inputs(ui: &MainWindow, st: &mut State) -> Result<(), Msg> {
     Ok(())
 }
 
+/// The installation state file: next to the launcher configuration (the same file as `install::state_path()` in the program; derived from the window's own
+/// configuration path so that a test with a private configuration never touches the real settings).
+fn install_state_file(config_path: &Path) -> Option<PathBuf> {
+    config_path.parent().filter(|d| !d.as_os_str().is_empty()).map(|d| d.join("install-state"))
+}
+
 fn save_install_state(st: &State) -> Result<(), Msg> {
-    match install::state_path() {
+    match install_state_file(&st.config_path) {
         Some(p) => st.install.save(&p).map_err(|e| Msg::new("Installation step failed: {0}", [e])),
         None => Ok(()),
     }
@@ -927,6 +1090,8 @@ fn kick_hash(ui: &MainWindow, state: &Shared, st: &mut State) {
 
 /// Recompute the INSTALLATION card from the inputs and the file system (read-only; starts the background hash when needed).
 fn refresh_install(ui: &MainWindow, state: &Shared, st: &mut State) {
+    // (the user's "install a new copy" decision was handed to the detection at start-up and by every change of it; see `State::apply_search`)
+    st.view.ignored = st.install.ignored.clone();
     let import_given = !ui.get_install_import_path().trim().is_empty();
     kick_hash(ui, state, st);
     let sha = cached_sha(st);
@@ -941,6 +1106,7 @@ fn refresh_install(ui: &MainWindow, state: &Shared, st: &mut State) {
             let gate = current_gate(st, next.next);
             st.view.needs_install = next.next != install::Next::Play || gate != install::Gate::Open;
             st.view.install_waiting = gate == install::Gate::Working;
+            st.view.first_run = gate == install::Gate::Open && matches!(next.stage, install::Stage::Empty | install::Stage::FoldersReady | install::Stage::PartialDownload { .. });
             st.view.install_hint = match gate {
                 install::Gate::Working => Some(Msg::plain(
                     "The original Funcom program is working (download or check). When it shows “Play”, close its window: this window then checks the result by itself and continues.",
@@ -955,13 +1121,17 @@ fn refresh_install(ui: &MainWindow, state: &Shared, st: &mut State) {
                 st.view.install = Some((hint, Msg::plain("Start the original patcher")));
                 ui.set_install_action_enabled(gate == install::Gate::Unverified);
             }
-            st.view.install_label = Some(match (gate, next.stage) {
+            st.view.install_label = Some(match (gate, next.stage.clone()) {
                 (install::Gate::Working, _) => Msg::plain("FUNCOM IS WORKING …"),
                 (install::Gate::Unverified, _) => Msg::plain("VERIFY INSTALLATION"),
                 (_, install::Stage::Empty | install::Stage::FoldersReady) => Msg::plain("INSTALL THE GAME"),
                 _ => Msg::plain("CONTINUE INSTALLATION"),
             });
             st.view.location = compact_path(&layout.base);
+            if cfg!(windows) {
+                windows_install_view(st, &layout, next.stage.clone(), gate);
+                st.view.directx_missing = tsw_launch::winnative::directx_missing_now().into_iter().map(String::from).collect();
+            }
             st.view.install_notice = st
                 .install
                 .base
@@ -976,11 +1146,93 @@ fn refresh_install(ui: &MainWindow, state: &Shared, st: &mut State) {
     }
 }
 
+/// Every installation folder the launcher can see right now (the client's parent folders): detected ones plus the ones named in the configuration.
+fn existing_installation_dirs(st: &State) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = discover::find_native_installs(&tsw_launch::winnative::search_roots()).into_iter().filter_map(|c| c.parent().map(Path::to_path_buf)).collect();
+    for c in [st.config.client_exe.as_ref(), st.install.client_exe.as_ref()].into_iter().flatten() {
+        if let Some(p) = c.parent() {
+            if !v.iter().any(|x| tsw_launch::winnative::overlaps(x, p)) {
+                v.push(p.to_path_buf());
+            }
+        }
+    }
+    v
+}
+
+/// The user chose `path` for a NEW copy: check it, then ignore every existing installation (nothing there is touched) and remember the folder.
+fn start_new_copy(ui: &MainWindow, state: &Shared, st: &mut State, path: PathBuf) {
+    let mut ignored = st.install.ignored.clone();
+    for d in existing_installation_dirs(st) {
+        if !ignored.iter().any(|x| tsw_launch::winnative::overlaps(x, &d)) {
+            ignored.push(d);
+        }
+    }
+    let target = match install::validate_new_target(&path, &ignored) {
+        Ok(t) => t,
+        Err(why) => {
+            st.view.message = Some(Msg::new("This folder cannot be used for a new copy: {0}", [why]));
+            return render(ui, st);
+        }
+    };
+    let overlaps_ignored = |c: &PathBuf| ignored.iter().any(|d| tsw_launch::winnative::overlaps(c, d));
+    // a stored choice that points into an ignored installation is dropped (the folder itself stays in the ignored list and can be used again)
+    let mut cfg = st.config.clone();
+    if cfg.client_exe.as_ref().is_some_and(overlaps_ignored) {
+        cfg.client_exe = None;
+    }
+    if st.install.client_exe.as_ref().is_some_and(overlaps_ignored) {
+        st.install.client_exe = None;
+    }
+    st.install.ignored = ignored;
+    st.install.target = Some(target.clone());
+    st.install.apply_search();
+    if let Err(e) = config::save(&st.config_path, &cfg) {
+        st.view.message = Some(Msg::new("The configuration could not be saved: {0}", [e.to_string()]));
+        return render(ui, st);
+    }
+    st.config = cfg;
+    ui.set_client_override("".into());
+    st.install_auto = false;
+    let _ = save_install_state(st);
+    st.view.message = Some(Msg::new(
+        "The existing installation is now ignored by the launcher (nothing there was changed). The new copy goes into {0}. Choose how to install it below.",
+        [target.display().to_string()],
+    ));
+    refresh_install(ui, state, st);
+    render(ui, st);
+    // re-detect after this handler returned (it holds the state lock that the background work needs)
+    let (weak, state) = (ui.as_weak(), state.clone());
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(ui) = weak.upgrade() {
+            prepare_in_background(&ui, &state, false);
+        }
+    });
+}
+
+/// Windows main view: show the folder that matters (the game, not the launcher's data folder) and say plainly which of the three situations applies:
+/// not installed, installation found but not confirmed complete, or (not shown here, the window then offers "Play") ready.
+fn windows_install_view(st: &mut State, layout: &install::Layout, stage: install::Stage, gate: install::Gate) {
+    let found = install::find_installation(layout, &st.install);
+    let game_dir = found.as_ref().and_then(|f| f.client.parent().map(Path::to_path_buf)).or_else(|| tsw_launch::winnative::default_game_dir(&tsw_launch::winnative::real_env));
+    // a chosen new folder is shown while nothing is installed there yet
+    let game_dir = if found.is_none() { st.install.target.clone().or(game_dir) } else { game_dir };
+    st.view.location = game_dir.map(|d| d.display().to_string()).unwrap_or_default();
+    st.view.install_state = match (&stage, gate) {
+        (_, install::Gate::Working) => None, // the hint under the folder already explains what Funcom's program is doing
+        (install::Stage::PatcherReady { .. }, _) => Some((Msg::plain("Installation found, but incomplete: the original patcher still has to fetch the game data."), 1)),
+        (install::Stage::Installed { .. }, install::Gate::Unverified) => Some((Msg::plain("Installation found, but not confirmed complete. The original patcher has to check it."), 1)),
+        (install::Stage::Installed { .. }, _) => None,
+        _ => Some((Msg::plain("Not installed."), 0)),
+    };
+    // all installations on this computer, offered while none has been chosen (a stored choice is the user's decision)
+    st.view.detected = if st.config.client_exe.as_ref().is_some_and(|p| p.is_file()) { Vec::new() } else { discover::find_native_installs(&tsw_launch::winnative::search_roots()) };
+}
+
 /// Is the installation ready, may it be started, or does it wait for Funcom's own programs? Only while files of the game exist; an installation the launcher
 /// configuration already names is the user's decision and always open.
 fn current_gate(st: &State, next: install::Next) -> install::Gate {
     // the same decision the command line makes (`install::gate_for`); only the window can observe a run and so knows `run_ok`
-    install::gate_for(next, st.config.client_exe.as_ref().is_some_and(|p| p.is_file()), &st.evidence, st.run_ok)
+    install::gate_for(next, config_names_client(st), &st.evidence, st.run_ok)
 }
 
 /// Follow one run of the original patcher: a new run starts when a patcher process appears, and when it is gone the run is judged
@@ -1040,7 +1292,7 @@ fn close_patcher_when_confirmed(ui: &MainWindow, state: &Shared, st: &mut State)
         return;
     }
     let Ok(layout) = model::install_layout(&ui.get_install_base(), home_dir().as_deref()) else { return };
-    let Some(rt) = discover::find_runtimes(&Env::from_process()).into_iter().next() else { return };
+    let Some(rt) = wine_program() else { return };
     st.close_attempted = true;
     let (weak, state2) = (ui.as_weak(), state.clone());
     std::thread::spawn(move || {
@@ -1058,7 +1310,7 @@ fn close_patcher_when_confirmed(ui: &MainWindow, state: &Shared, st: &mut State)
 /// The big button is back to PLAY (Funcom confirmed, or the files were there all along) but the configuration does not name the client yet: store it,
 /// exactly what the click on the old "CONTINUE INSTALLATION" did.
 fn adopt_when_ready(ui: &MainWindow, state: &Shared, st: &mut State) {
-    if st.view.needs_install || st.config.client_exe.as_ref().is_some_and(|p| p.is_file()) {
+    if st.view.needs_install || config_names_client(st) {
         return;
     }
     let Ok(layout) = model::install_layout(&ui.get_install_base(), home_dir().as_deref()) else { return };
@@ -1123,6 +1375,19 @@ fn install_sink(weak: &slint::Weak<MainWindow>, state: &Shared, done: Msg) -> im
 
 /// No Wine/Proton runner is installed: with the user's consent download the one pinned GE-Proton into the launcher's own data folder
 /// (checksum-verified, see `tsw_launch::runtimedl`); without consent only say what is missing.
+/// What an installation step needs from the Wine runtime: its program. Native Windows needs none: the commands start the original programs themselves and ignore
+/// the (empty) path.
+struct WineProgram {
+    wine: PathBuf,
+}
+
+fn wine_program() -> Option<WineProgram> {
+    if !tsw_launch::winnative::Capabilities::current().wine_runtime {
+        return Some(WineProgram { wine: PathBuf::new() });
+    }
+    discover::find_runtimes(&Env::from_process()).into_iter().next().map(|r| WineProgram { wine: r.wine })
+}
+
 fn provide_runner(ui: &MainWindow, state: &Shared, mut st: std::sync::MutexGuard<'_, State>) {
     if !ui.get_install_consent() {
         st.view.message = Some(Msg::plain("No Wine/Proton runner was found. Agree to the downloads and press the button again."));
@@ -1255,9 +1520,10 @@ fn install_action(ui: &MainWindow, state: &Shared) {
             return;
         }
         next @ (install::Next::CreatePrefix | install::Next::RunInstaller)
-            if next == install::Next::CreatePrefix || (ui.get_install_consent() && prefix::installed_native(&layout.prefix()).is_none()) =>
+            if tsw_launch::winnative::Capabilities::current().wine_runtime
+                && (next == install::Next::CreatePrefix || (ui.get_install_consent() && prefix::installed_native(&layout.prefix()).is_none())) =>
         {
-            let Some(rt) = discover::find_runtimes(&Env::from_process()).into_iter().next() else {
+            let Some(rt) = wine_program() else {
                 return provide_runner(ui, state, st);
             };
             ui.set_busy(true);
@@ -1293,7 +1559,7 @@ fn install_action(ui: &MainWindow, state: &Shared) {
         }
         install::Next::CreatePrefix => unreachable!("handled by the prefix preparation guard"),
         install::Next::RunInstaller => {
-            let Some(rt) = discover::find_runtimes(&Env::from_process()).into_iter().next() else {
+            let Some(rt) = wine_program() else {
                 return provide_runner(ui, state, st);
             };
             let Some(sha) = sha else {
@@ -1302,19 +1568,36 @@ fn install_action(ui: &MainWindow, state: &Shared) {
             };
             match install::run_gate(&layout, &st.install, &install::OFFICIAL, &sha) {
                 Err(e) => install_failed(&mut st, e),
-                Ok(()) => match tsw_launch::launch::spawn_detached_child(&mut install::installer_command(&layout, &rt.wine), None) {
+                Ok(()) => match install::installer_command_to(&layout, &rt.wine, st.install.target.as_deref())
+                    .ok_or_else(|| "the new folder cannot be handed to the installer safely; choose another folder".to_string())
+                    .and_then(|mut cmd| tsw_launch::launch::spawn_detached_child(&mut cmd, None).map_err(|e| e.to_string()))
+                {
                     Ok(child) => {
+                        // from now on the registry is read again, but only for entries that are new compared with this moment
+                        st.install.note_installer_started(tsw_launch::winnative::registered_game_dirs());
+                        st.install.apply_search();
+                        let _ = save_install_state(&st);
                         st.funcom_children.push(child);
                         st.evidence.installer_running = true;
                         st.install_auto = false;
-                        st.view.message = Some(Msg::new("{0} {1}", [Msg::plain("Please use the suggested default settings while installing The Secret World and do not change the installation path in particular. The suggested Windows path is inside the Wine/Proton environment managed by our launcher."), Msg::plain("When the installer is finished, press the button again.")]))
+                        st.view.message = Some(Msg::new(
+                            "{0} {1}",
+                            [
+                                if tsw_launch::winnative::Capabilities::current().wine_runtime {
+                                    Msg::plain("Please use the suggested default settings while installing The Secret World and do not change the installation path in particular. The suggested Windows path is inside the Wine/Proton environment managed by our launcher.")
+                                } else {
+                                    model::windows_installer_notice(st.install.target.as_deref())
+                                },
+                                Msg::plain("When the installer is finished, press the button again."),
+                            ],
+                        ))
                     }
                     Err(e) => install_failed(&mut st, e),
                 },
             }
         }
         install::Next::RunPatcher => {
-            let Some(rt) = discover::find_runtimes(&Env::from_process()).into_iter().next() else {
+            let Some(rt) = wine_program() else {
                 return provide_runner(ui, state, st);
             };
             match install::patcher_to_run(&install::assess(&layout, &st.install, sha.as_deref()).stage) {
@@ -1344,9 +1627,17 @@ fn install_action(ui: &MainWindow, state: &Shared) {
 /// Store an installation in the configuration (a working entry is never replaced) and re-detect.
 fn adopt_into_config(ui: &MainWindow, state: &Shared, st: &mut State, a: install::Adoption) {
     let mut cfg = st.config.clone();
+    if !tsw_launch::winnative::stored_paths_honored() {
+        // paused detection: the path in an old configuration was not chosen by the user and must not protect itself against the real choice
+        cfg.client_exe = None;
+    }
     match install::merge_config(&mut cfg, &a).map_err(|e| e.to_string()).and_then(|()| config::save(&st.config_path, &cfg).map_err(|e| e.to_string())) {
         Ok(()) => {
             st.config = cfg;
+            // a deliberate choice (by hand, or the installation the launcher itself started and Funcom confirmed): stored paths count from now on
+            st.install.choice_made = true;
+            st.install.apply_search();
+            let _ = save_install_state(st);
             st.view.message = Some(Msg::new("Installation stored: {0}", [a.client_exe.display().to_string()]));
             ui.set_client_override(a.client_exe.display().to_string().into());
             if let Some(p) = &a.prefix {
@@ -1376,6 +1667,8 @@ fn main() -> Result<(), slint::PlatformError> {
         Err(e) => (Config::default(), Some(Msg::new("Configuration not readable: {0}", [e.to_string()]))),
     };
     let ui = MainWindow::new()?;
+    // native Windows has no Wine, Proton, DXVK or Microsoft-component options: the window hides them
+    ui.set_windows(!tsw_launch::winnative::Capabilities::current().wine_runtime);
     // The desktop identity: Wayland app id and X11 WM_CLASS. KDE, GNOME and the task bar find the icon through the desktop entry of
     // the same name (packaging/linux). Needs the Slint context (created with the first window) and must happen before show();
     // it must match that file (test below).
@@ -1425,7 +1718,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let mut st = state.lock().unwrap();
-        st.install = install::state_path().and_then(|p| install::State::load(&p).ok()).unwrap_or_default();
+        st.install = install_state_file(&st.config_path).and_then(|p| install::State::load(&p).ok()).unwrap_or_default();
+        st.install.apply_search();
         // an earlier layout (inside the Flatpak data folder) is only reported; the window works with the default folder
         ui.set_install_base(st.install.base.as_ref().filter(|b| !install::is_legacy_base(b)).map(|b| b.display().to_string()).unwrap_or_default().into());
         ui.set_install_consent(st.install.download_consent.as_deref() == Some(install::OFFICIAL.url));
@@ -1525,7 +1819,11 @@ mod tests {
         assert_eq!(startup_language(&cfg(Some("auto")), &de), "de");
         assert_eq!(startup_language(&cfg(Some("en")), &de), "en", "the saved choice wins over the locale");
         assert_eq!(startup_language(&cfg(Some("de")), &none), "de");
+        // without any locale variable: English on Linux; on Windows the display language of the system (English as the fallback for unsupported languages)
+        #[cfg(not(windows))]
         assert_eq!(startup_language(&cfg(None), &none), "en");
+        #[cfg(windows)]
+        assert!(["en", "de"].contains(&startup_language(&cfg(None), &none)));
     }
 
     #[test]

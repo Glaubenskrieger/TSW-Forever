@@ -5,7 +5,7 @@
   "sdk": "org.freedesktop.Sdk",
   "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
   "command": "tsw-launcher",
-  "x-verification-note": "Runtime 25.08 and this extension layout were tested on one Steam Machine; this does not establish compatibility with every driver or distribution. ONE host folder is granted, ~/Games/The Secret World (the whole installation: prefix with the game, runtime, downloads, caches, logs); only the small configuration lives in the app data folder; files are chosen through the portal.",
+  "x-verification-note": "Runtime 25.08 and this extension layout have private build/install evidence and owner-reported Steam Machine acceptance of rc.3; this does not establish compatibility with every driver/distribution. ONE host folder is granted, ~/Games/The Secret World (the whole installation: prefix with the game, runtime, downloads, caches, logs); only the small configuration lives in the app data folder; files are chosen through the portal. See documentation/packaging.md.",
   "finish-args": [
     "--share=ipc",
     "--share=network",

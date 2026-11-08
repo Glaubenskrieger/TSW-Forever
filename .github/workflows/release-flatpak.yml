@@ -1,0 +1,160 @@
+# PUBLISHES the launcher Flatpak repository to GitHub Pages. Never runs by itself: manual start only, a typed confirmation, a protected
+# environment (the owner configures required reviewers and "deployment branches: main only" for "flatpak-release" in the repository settings; this file changes no setting).
+# MAIN ONLY: every job refuses any ref except main and a commit that is not part of main. There is no free ref, SHA or version input: the
+# published version is the one in packaging/project.conf of that main commit, and the only choice is the channel (stable or testing).
+# Channel rules (scripts/flatpak_channel.py): pre-releases go to testing only; a version must be newer than what the channel carries now (no
+# downgrade); a final stable release is promoted to testing as well, so testing users are never left behind.
+# Needs the secrets FLATPAK_GPG_PRIVATE_KEY (ASCII-armoured, a CI-only key WITHOUT passphrase - a passphrase path is not implemented) and FLATPAK_GPG_KEY_ID - they are
+# created by the owner and live only in GitHub. The first step refuses to run while any action is not pinned to a commit SHA.
+# Private repository: GitHub Pages for a private repository needs a paid plan and the published site is reachable by anyone who has the URL
+# (unless Enterprise access control is used) - check the plan before running, see documentation/packaging.md.
+name: release-flatpak
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type PUBLISH to publish the Flatpak repository'
+        required: true
+        type: string
+      channel:
+        description: 'Channel (stable = final versions only; testing = pre-releases and early finals)'
+        required: true
+        type: choice
+        options:
+          - stable
+          - testing
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-flatpak
+  cancel-in-progress: false
+
+env:
+  FREEDESKTOP_VERSION: "25.08"
+
+jobs:
+  build:
+    if: ${{ inputs.confirm == 'PUBLISH' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: flatpak-release
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository (read-only token, no stored credentials, full history for the main check)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Refuse a commit that is not part of main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_SHA is not on main: publishing is allowed from main only" >&2; exit 1; }
+
+      - name: Read and check the version (scripts/version.py, no network)
+        id: version
+        run: |
+          scripts/version.py check
+          echo "version=$(scripts/version.py show)" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse unpinned actions
+        run: scripts/pin_actions.sh --check
+
+      - name: Read the live channel state and decide the branches (refuses a downgrade, a pre-release on stable or a republish)
+        id: plan
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # shellcheck disable=SC1091
+          . packaging/project.conf
+          site="${FLATPAK_REPO_URL%/repo}"
+          code="$(curl --proto '=https' --proto-redir '=https' --max-redirs 3 -sS -o "$RUNNER_TEMP/channels.json" -w '%{http_code}' "$site/channels.json")"
+          case "$code" in
+            200) live="$RUNNER_TEMP/channels.json";;
+            404) live="";;   # nothing published yet
+            *) echo "cannot read the live channel state (HTTP $code); refusing to publish blind" >&2; exit 1;;
+          esac
+          branches="$(python3 -I scripts/flatpak_channel.py plan "$VERSION" "$CHANNEL" $live)"
+          echo "branches=$(echo $branches)" >> "$GITHUB_OUTPUT"
+          echo "live=$live" >> "$GITHUB_OUTPUT"
+          echo "live_branches=$(python3 -I -c "import json,sys;print(' '.join(json.load(open('$live'))['channels'])) if '$live' else print('')")" >> "$GITHUB_OUTPUT"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common ostree rsync desktop-file-utils appstream python3 python3-yaml jq gnupg libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev
+
+      - name: Install the pinned Freedesktop runtime, SDK and Rust extension
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub \
+            "org.freedesktop.Platform//${FREEDESKTOP_VERSION}" \
+            "org.freedesktop.Sdk//${FREEDESKTOP_VERSION}" \
+            "org.freedesktop.Sdk.Extension.rust-stable//${FREEDESKTOP_VERSION}"
+
+      - name: Fetch crates, test, check, vendor
+        run: |
+          scripts/build_flatpak.sh fetch --allow-network
+          scripts/build_flatpak.sh test
+          scripts/build_flatpak.sh check
+          scripts/build_flatpak.sh vendor --allow-network
+
+      - name: Import the signing key
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+        run: |
+          install -d -m 700 "$RUNNER_TEMP/gnupg"
+          printf '%s' "$FLATPAK_GPG_PRIVATE_KEY" | GNUPGHOME="$RUNNER_TEMP/gnupg" gpg --batch --import
+          echo "GNUPGHOME=$RUNNER_TEMP/gnupg" >> "$GITHUB_ENV"
+          GNUPGHOME="$RUNNER_TEMP/gnupg" gpg --export "$FLATPAK_GPG_KEY_ID" > "$RUNNER_TEMP/public.gpg"
+
+      - name: Build and sign the repository (branches that are not republished are mirrored from the live repository)
+        env:
+          FLATPAK_GPG_KEY_ID: ${{ secrets.FLATPAK_GPG_KEY_ID }}
+          FLATPAK_PUBLIC_KEY: ${{ runner.temp }}/public.gpg
+          BRANCHES: ${{ steps.plan.outputs.branches }}
+          LIVE_BRANCHES: ${{ steps.plan.outputs.live_branches }}
+        run: |
+          # shellcheck disable=SC1091
+          . packaging/project.conf
+          export FLATPAK_LIVE_REPO_URL="$FLATPAK_REPO_URL" FLATPAK_LIVE_BRANCHES="$LIVE_BRANCHES"
+          scripts/build_flatpak.sh publish-repo $BRANCHES
+
+      - name: Create the install files, the channel record and the site
+        env:
+          BRANCHES: ${{ steps.plan.outputs.branches }}
+          VERSION: ${{ steps.version.outputs.version }}
+          LIVE: ${{ steps.plan.outputs.live }}
+        run: |
+          # shellcheck disable=SC1091
+          . packaging/project.conf
+          scripts/gen_flatpak_refs.sh build/flatpak/site "$RUNNER_TEMP/public.gpg"
+          cp -r build/flatpak/repo build/flatpak/site/repo
+          [ -n "$LIVE" ] && cp "$LIVE" build/flatpak/site/channels.json
+          for b in $BRANCHES; do
+            commit="$(ostree rev-parse --repo=build/flatpak/repo "app/$APP_ID/x86_64/$b")"
+            python3 -I scripts/flatpak_channel.py record build/flatpak/site/channels.json "$b" "$VERSION" "$commit"
+          done
+          printf '<!doctype html><meta charset=utf-8><title>TSW-Forever Flatpak repository</title><p>Install: <code>flatpak install --user tsw-forever.flatpakrepo</code> (testing: use org.tswlauncher.Launcher-testing.flatpakref)</p>' > build/flatpak/site/index.html
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: build/flatpak/site
+
+  deploy:
+    needs: build
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    environment: flatpak-release
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

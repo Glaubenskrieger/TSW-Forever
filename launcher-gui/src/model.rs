@@ -103,8 +103,58 @@ fn row_from(f: &Finding) -> Row {
     Row { kind, text, hint }
 }
 
+/// The notice shown before the original installer starts on Windows: the normal advice, or the test-mode warning (`TSW_LAUNCH_EXCLUDE_DIRS`).
+pub fn windows_installer_notice(target: Option<&Path>) -> Msg {
+    if let Some(t) = target {
+        // a NEW copy: the original installer was handed this folder explicitly; the user checks it in the installer's window
+        return Msg::new(
+            "The original installer is started with the folder {0} for the NEW copy. Check that it shows exactly this folder; if it shows another folder, or none, cancel it. Windows may ask for your permission to start the installer.",
+            [t.display().to_string()],
+        );
+    }
+    // literals on purpose: the translation test finds the message ids in the source text; `notice_texts_match_the_constants` keeps them equal to the constants
+    if tsw_launch::winnative::test_mode_active() {
+        Msg::plain("TEST MODE: in the original installer choose a NEW, empty folder for the game - never an existing game folder. Windows may ask for your permission to start the installer.")
+    } else {
+        Msg::plain("Please use the suggested default settings while installing The Secret World and do not change the installation path in particular. Windows may ask for your permission to start the installer.")
+    }
+}
+
+/// The checks of native Windows: the client file and the Direct3D libraries it loads. There is no Wine runtime, prefix, display server or 32-bit
+/// library to check, and nothing is downloaded or installed. Pure: the facts come in as arguments.
+pub fn prepare_native(client_exists: bool, client: &Path, directx_missing: &[&str]) -> Preparation {
+    let mut rows: Vec<Row> = Vec::new();
+    if client_exists {
+        rows.push(Row { kind: Kind::Ok, text: Msg::new("{0} local checks passed", ["1".to_string()]), hint: Msg::default() });
+    } else {
+        rows.push(Row {
+            kind: Kind::Fail,
+            text: Msg::new("The game client {0} was not found", [client.display().to_string()]),
+            hint: Msg::plain("Choose the installation again or reinstall the game."),
+        });
+    }
+    if !directx_missing.is_empty() {
+        rows.push(Row {
+            kind: Kind::Warn,
+            text: Msg::new("These Direct3D libraries are missing on this computer: {0}", [directx_missing.join(", ")]),
+            hint: Msg::plain("They belong to Microsoft's DirectX End-User Runtimes (June 2010). Install that package from Microsoft's website yourself; the launcher does not download Microsoft software on Windows."),
+        });
+    }
+    let can_play = !rows.iter().any(|r| r.kind == Kind::Fail);
+    rows.sort_by_key(|r| match r.kind {
+        Kind::Fail => 0,
+        Kind::Warn => 1,
+        Kind::Ok => 2,
+    });
+    Preparation { rows, can_play }
+}
+
 /// Local, offline checks for the detected installation. Nothing is changed or contacted.
 pub fn prepare(d: &Detected) -> Preparation {
+    if !tsw_launch::winnative::Capabilities::current().wine_runtime {
+        let missing = tsw_launch::winnative::directx_missing_now();
+        return prepare_native(d.client_exe.is_file(), &d.client_exe, &missing);
+    }
     let runner = Runner::from_spec(Some(d.runner.as_str()), Some(d.prefix.clone()));
     let has_display = std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
     let mut findings = doctor::check_all(&d.client_exe, &runner, Some(&d.prefix), &doctor::default_dirs(), std::env::var_os("PATH").as_deref(), has_display);
@@ -188,6 +238,27 @@ pub fn install_status(layout: &install::Layout, state: &install::State, import_g
                 Err(e) => (Msg::new("{0} {1}", [head, blocked(e.to_string())]), Msg::plain("Download installer"), false),
             }
         }
+        // native Windows: no Wine prefix is created, the original installer runs next (the Linux flow reaches this stage with another next step)
+        (Stage::InstallerReady { checksum }, Next::RunInstaller) => match installer_sha {
+            None => (Msg::plain("Checking the installer fingerprint …"), Msg::plain("Run the original installer"), false),
+            Some(sha) => match install::run_gate(layout, state, &install::OFFICIAL, sha) {
+                Ok(()) => (
+                    Msg::new(
+                        "{0} {1}",
+                        [
+                            match checksum {
+                                install::Checksum::Verified => Msg::plain("The installer is in the cache and its checksum matches."),
+                                _ => Msg::plain("The installer is in the cache."),
+                            },
+                            windows_installer_notice(state.target.as_deref()),
+                        ],
+                    ),
+                    Msg::plain("Run the original installer"),
+                    true,
+                ),
+                Err(e) => (blocked(e.to_string()), Msg::plain("Run the original installer"), false),
+            },
+        },
         (Stage::InstallerReady { checksum }, _) => (
             match checksum {
                 install::Checksum::Verified => Msg::plain("The installer is in the cache and its checksum matches. Next: the Wine prefix."),
@@ -330,7 +401,9 @@ pub fn cli_binary() -> PathBuf {
 /// when the game ends - for any reason, a crash included. A start that fails returns the readable message instead (the window stays open).
 pub fn start_game_child(cli: &Path, config_file: &Path) -> Result<Option<std::process::Child>, Msg> {
     use std::io::BufRead;
-    let mut child = Command::new(cli)
+    let mut command = Command::new(cli);
+    tsw_launch::winnative::no_window(&mut command);
+    let mut child = command
         .arg("--config")
         .arg(config_file)
         .arg("--detach")
@@ -382,6 +455,43 @@ pub fn background_image(config_file: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn notice_texts_match_the_constants() {
+        let en = crate::i18n::Catalog::new("en");
+        assert_eq!(en.render(&windows_installer_notice(None)), if tsw_launch::winnative::test_mode_active() { install::INSTALLER_NOTICE_TEST_MODE } else { install::INSTALLER_NOTICE_WINDOWS });
+        // both literals of `windows_installer_notice` are the constants (checked through the source, so a change of one without the other fails here)
+        let src = include_str!("model.rs");
+        assert!(src.contains(&format!("Msg::plain(\"{}\")", install::INSTALLER_NOTICE_TEST_MODE)));
+        assert!(src.contains(&format!("Msg::plain(\"{}\")", install::INSTALLER_NOTICE_WINDOWS)));
+        assert!(
+            install::INSTALLER_NOTICE_TEST_MODE.contains("NEW, empty folder") && !install::INSTALLER_NOTICE_TEST_MODE.contains("default settings"),
+            "the test notice must never advise keeping the suggested folder"
+        );
+    }
+
+    #[test]
+    fn native_windows_checks_only_the_client_and_the_direct3d_libraries() {
+        let ok = prepare_native(true, Path::new("C:\\Games\\TSW\\TheSecretWorldDX11.exe"), &[]);
+        assert!(ok.can_play && ok.rows.len() == 1 && ok.rows[0].kind == Kind::Ok);
+        let warn = prepare_native(true, Path::new("C:\\x.exe"), &["d3dx11_43.dll", "d3dx9_43.dll"]);
+        assert!(warn.can_play, "missing libraries are a warning, the original installer or the user can still fix them: the start is not blocked by a guess");
+        assert!(warn.rows.iter().any(|r| r.kind == Kind::Warn));
+        let en = crate::i18n::Catalog::new("en");
+        let text = en.render(&warn.rows[0].text);
+        assert!(text.contains("d3dx11_43.dll, d3dx9_43.dll"), "{text}");
+        let gone = prepare_native(false, Path::new("C:\\x.exe"), &[]);
+        assert!(!gone.can_play && gone.rows[0].kind == Kind::Fail);
+        for r in ok.rows.iter().chain(&warn.rows).chain(&gone.rows) {
+            let shown = en.render(&r.text) + &en.render(&r.hint);
+            assert!(!shown.to_lowercase().contains("wine") && !shown.to_lowercase().contains("prefix"), "Wine wording leaked into the Windows checks: {shown}");
+        }
+    }
+
+    #[test]
+    fn the_windows_installer_notice_of_the_window_is_the_one_of_the_command_line() {
+        assert_eq!(install::INSTALLER_NOTICE_WINDOWS, "Please use the suggested default settings while installing The Secret World and do not change the installation path in particular. Windows may ask for your permission to start the installer.");
+    }
+
     use super::*;
     use crate::i18n::Catalog;
 
@@ -403,6 +513,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)] // Linux/Wine installation layout and Flatpak home; Windows uses prepare_native and LOCALAPPDATA
     #[test]
     fn an_unusable_installation_blocks_play_and_failures_come_first() {
         let d = tmp("prep");
@@ -501,6 +612,7 @@ mod tests {
         assert_eq!(c.language, None);
     }
 
+    #[cfg(unix)]
     fn fake_cli(dir: &Path, body: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let script = dir.join("fake-cli");
@@ -512,6 +624,7 @@ mod tests {
     /// `start_game` for a script that this test has just written. Linux refuses to execute a file while any process holds
     /// it open for writing (ETXTBSY), and a parallel test that forks at that very moment holds a copy of the descriptor
     /// until its own exec. That is a property of parallel tests, not of the launcher, so only the tests retry.
+    #[cfg(unix)]
     fn start_fresh_script(cli: &Path, config: &Path) -> Result<Option<std::process::Child>, Msg> {
         for _ in 0..100 {
             match start_game_child(cli, config) {
@@ -522,6 +635,7 @@ mod tests {
         start_game_child(cli, config)
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_game_is_started_with_the_saved_config_and_the_child_stays_for_the_window_to_watch() {
         let d = tmp("start");
@@ -533,6 +647,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_immediate_start_failure_keeps_the_launcher_open_with_a_readable_message() {
         let d = tmp("startfail");
@@ -620,6 +735,7 @@ mod tests {
         assert!(Catalog::new("en").render(&err).contains("virtual desktop") && Catalog::new("de").render(&err).contains("virtuellen Desktop"), "{}", Catalog::new("de").render(&err));
     }
 
+    #[cfg(unix)] // Linux/Wine installation layout and Flatpak home; Windows uses prepare_native and LOCALAPPDATA
     #[test]
     fn the_installation_card_derives_its_text_and_button_from_the_files_and_the_users_decisions() {
         let (en, de) = (Catalog::new("en"), Catalog::new("de"));

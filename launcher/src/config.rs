@@ -295,24 +295,31 @@ pub fn load(path: &Path) -> Result<Config, ConfigError> {
     parse(&text)
 }
 
-/// Where the configuration is written: `$TSW_LAUNCH_CONFIG`, else `$XDG_CONFIG_HOME/tsw-launch/config`,
-/// `%APPDATA%\tsw-launch\config`, `~/.config/tsw-launch/config`. Unlike [`default_path`] the file need not exist.
+/// Where the configuration is written: `$TSW_LAUNCH_CONFIG`, else on Windows `%APPDATA%\tsw-forever\config`, elsewhere `$XDG_CONFIG_HOME/tsw-launch/config`,
+/// `~/.config/tsw-launch/config`. Unlike [`default_path`] the file need not exist.
 pub fn write_path() -> Option<PathBuf> {
     let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-    env("TSW_LAUNCH_CONFIG")
-        .or_else(|| env("XDG_CONFIG_HOME").map(|d| d.join("tsw-launch").join("config")))
-        .or_else(|| env("APPDATA").map(|d| d.join("tsw-launch").join("config")))
-        .or_else(|| env("HOME").map(|d| d.join(".config").join("tsw-launch").join("config")))
+    if let Some(explicit) = env("TSW_LAUNCH_CONFIG") {
+        return Some(explicit);
+    }
+    // native Windows: `%APPDATA%\tsw-forever\config` (Known Folder; settings of the earlier `tsw-launch` folder are copied once)
+    #[cfg(windows)]
+    {
+        crate::winnative::settings_dir_migrated().map(|d| d.join("config"))
+    }
+    #[cfg(not(windows))]
+    {
+        env("XDG_CONFIG_HOME")
+            .map(|d| d.join("tsw-launch").join("config"))
+            .or_else(|| env("APPDATA").map(|d| d.join("tsw-launch").join("config")))
+            .or_else(|| env("HOME").map(|d| d.join(".config").join("tsw-launch").join("config")))
+    }
 }
 
 /// Default location: `$TSW_LAUNCH_CONFIG`, else `$XDG_CONFIG_HOME/tsw-launch/config`, `~/.config/tsw-launch/config`
-/// (Linux/macOS) or `%APPDATA%\tsw-launch\config` (Windows). Returns the path only if the file exists.
+/// (Linux/macOS) or `%APPDATA%\tsw-forever\config` (Windows). Returns the path only if the file exists.
 pub fn default_path() -> Option<PathBuf> {
-    let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-    let candidate = env("TSW_LAUNCH_CONFIG")
-        .or_else(|| env("XDG_CONFIG_HOME").map(|d| d.join("tsw-launch").join("config")))
-        .or_else(|| env("APPDATA").map(|d| d.join("tsw-launch").join("config")))
-        .or_else(|| env("HOME").map(|d| d.join(".config").join("tsw-launch").join("config")))?;
+    let candidate = write_path()?;
     candidate.is_file().then_some(candidate)
 }
 

@@ -817,3 +817,141 @@ msgstr "Bitte lies vor der Zustimmung die verlinkten Microsoft-Bedingungen. Die 
 
 msgid "Could not open the licence link: {0}"
 msgstr "Der Lizenzlink konnte nicht geöffnet werden: {0}"
+
+msgid "Only the original installer from Funcom (about 33 MB) is downloaded, from the official address, and verified by checksum. The launcher downloads no Microsoft software on Windows."
+msgstr "Es wird nur der originale Installer von Funcom (ca. 33 MB) von der offiziellen Adresse geladen und per Prüfsumme verifiziert. Der Launcher lädt unter Windows keine Microsoft-Software herunter."
+
+msgid "A selected resolution is written to the game's own settings and applies at the next start. Windows runs the game natively: there is no frame-rate limit or counter from the launcher."
+msgstr "Eine gewählte Auflösung wird in die eigenen Einstellungen des Spiels geschrieben und gilt ab dem nächsten Start. Unter Windows läuft das Spiel nativ: Der Launcher bietet dort keine Bildratenbegrenzung und keinen Zähler."
+
+msgid "The installer is in the cache and its checksum matches."
+msgstr "Der Installer liegt im Cache und seine Prüfsumme stimmt."
+
+msgid "The installer is in the cache."
+msgstr "Der Installer liegt im Cache."
+
+msgid "Please use the suggested default settings while installing The Secret World and do not change the installation path in particular. Windows may ask for your permission to start the installer."
+msgstr "Bitte verwende während der Installation von The Secret World die vorgeschlagenen Standardeinstellungen und ändere insbesondere den Installationspfad nicht. Windows fragt eventuell nach deiner Erlaubnis, den Installer zu starten."
+
+msgid "The game client {0} was not found"
+msgstr "Der Spielclient {0} wurde nicht gefunden"
+
+msgid "Choose the installation again or reinstall the game."
+msgstr "Wähle die Installation erneut aus oder installiere das Spiel neu."
+
+msgid "These Direct3D libraries are missing on this computer: {0}"
+msgstr "Diese Direct3D-Bibliotheken fehlen auf diesem Computer: {0}"
+
+msgid "They belong to Microsoft's DirectX End-User Runtimes (June 2010). Install that package from Microsoft's website yourself; the launcher does not download Microsoft software on Windows."
+msgstr "Sie gehören zu Microsofts DirectX-Endbenutzer-Laufzeiten (Juni 2010). Installiere dieses Paket selbst von Microsofts Website; der Launcher lädt unter Windows keine Microsoft-Software herunter."
+
+msgid "the Direct3D libraries of the DirectX June 2010 runtime are present"
+msgstr "die Direct3D-Bibliotheken der DirectX-Laufzeit von Juni 2010 sind vorhanden"
+
+msgid "install Microsoft's DirectX End-User Runtimes (June 2010) yourself"
+msgstr "installieren Sie Microsofts DirectX-Endbenutzerlaufzeit (Juni 2010) selbst"
+
+msgid "Set up The Secret World"
+msgstr "The Secret World einrichten"
+
+msgid "Choose how the game gets onto this computer. An existing installation is never changed."
+msgstr "Wähle, wie das Spiel auf diesen Computer kommt. Eine vorhandene Installation wird nie verändert."
+
+msgid "Download installer and go"
+msgstr "Installer herunterladen und los"
+
+msgid "The official Funcom installer is downloaded, checked and started."
+msgstr "Der offizielle Funcom-Installer wird heruntergeladen, geprüft und gestartet."
+
+msgid "Provide the installer from disk"
+msgstr "Installer von der Festplatte angeben"
+
+msgid "Select an original Funcom installer file you already have."
+msgstr "Wähle eine bereits vorhandene originale Funcom-Installationsdatei."
+
+msgid "Use an existing TSW installation"
+msgstr "Vorhandene TSW-Installation verwenden"
+
+msgid "Select the folder of a game installation that already exists."
+msgstr "Wähle den Ordner einer bereits vorhandenen Spielinstallation."
+
+msgid "Game folder"
+msgstr "Spielordner"
+
+msgid "Not installed."
+msgstr "Nicht installiert."
+
+msgid "Installation found, but incomplete: the original patcher still has to fetch the game data."
+msgstr "Installation gefunden, aber unvollständig: Der originale Patcher muss noch die Spieldaten laden."
+
+msgid "Installation found, but not confirmed complete. The original patcher has to check it."
+msgstr "Installation gefunden, aber nicht als vollständig bestätigt. Der originale Patcher muss sie prüfen."
+
+msgid "Several installations were found. Choose the one to use:"
+msgstr "Es wurden mehrere Installationen gefunden. Wähle die zu verwendende:"
+
+msgid "These Direct3D libraries of Microsoft's DirectX End-User Runtimes (June 2010) are missing on this computer: {0}. The original game needs them in their 32-bit form; without them it may not start or may show errors."
+msgstr "Diese Direct3D-Bibliotheken der Microsoft DirectX End-User Runtimes (Juni 2010) fehlen auf diesem Computer: {0}. Das Originalspiel braucht sie in der 32-Bit-Form; ohne sie startet es eventuell nicht oder zeigt Fehler."
+
+msgid "The button downloads Microsoft's own installer from download.microsoft.com, checks its Microsoft signature and starts it. Microsoft's installer shows its own terms; Windows may ask for permission. Nothing is installed without your click."
+msgstr "Die Schaltfläche lädt Microsofts eigenen Installer von download.microsoft.com, prüft seine Microsoft-Signatur und startet ihn. Microsofts Installer zeigt seine eigenen Bedingungen; Windows fragt eventuell nach Erlaubnis. Ohne deinen Klick wird nichts installiert."
+
+msgid "Install DirectX components …"
+msgstr "DirectX-Komponenten installieren …"
+
+msgid "Check again"
+msgstr "Erneut prüfen"
+
+msgid "curl was not found. Download Microsoft's DirectX installer yourself from {0}"
+msgstr "curl wurde nicht gefunden. Lade Microsofts DirectX-Installer selbst von {0} herunter."
+
+msgid "Microsoft's DirectX installer was downloaded and verified."
+msgstr "Microsofts DirectX-Installer wurde heruntergeladen und geprüft."
+
+msgid "Microsoft's DirectX installer was started. Follow its steps (Windows may ask for permission), then click “Check again”."
+msgstr "Microsofts DirectX-Installer wurde gestartet. Folge seinen Schritten (Windows fragt eventuell nach Erlaubnis) und klicke dann auf „Erneut prüfen“."
+
+msgid "Microsoft's DirectX installer could not be prepared: {0}. It was not started. You can download it yourself from {1}"
+msgstr "Microsofts DirectX-Installer konnte nicht vorbereitet werden: {0}. Er wurde nicht gestartet. Du kannst ihn selbst von {1} herunterladen."
+
+msgid "All required DirectX libraries are present."
+msgstr "Alle benötigten DirectX-Bibliotheken sind vorhanden."
+
+msgid "Still missing: {0}"
+msgstr "Es fehlen noch: {0}"
+
+msgid "TEST MODE: in the original installer choose a NEW, empty folder for the game - never an existing game folder. Windows may ask for your permission to start the installer."
+msgstr "TESTMODUS: Wähle im originalen Installer einen NEUEN, leeren Ordner für das Spiel, niemals einen vorhandenen Spielordner. Windows fragt eventuell nach Erlaubnis, den Installer zu starten."
+
+msgid "The original installer is started with the folder {0} for the NEW copy. Check that it shows exactly this folder; if it shows another folder, or none, cancel it. Windows may ask for your permission to start the installer."
+msgstr "Der originale Installer wird mit dem Ordner {0} für die NEUE Kopie gestartet. Prüfe, dass er genau diesen Ordner anzeigt; zeigt er einen anderen Ordner oder keinen, brich ihn ab. Windows fragt eventuell nach Erlaubnis, den Installer zu starten."
+
+msgid "Ignored existing installation: {0}"
+msgstr "Ignorierte vorhandene Installation: {0}"
+
+msgid "Install a new copy in another folder instead …"
+msgstr "Stattdessen eine neue Kopie in einem anderen Ordner installieren …"
+
+msgid "Install a new copy in another folder …"
+msgstr "Neue Kopie in einem anderen Ordner installieren …"
+
+msgid "Use this when a game installation exists but you want a completely new one in another folder. The existing installation stays untouched and is ignored from then on; the original installer is started with the new folder."
+msgstr "Nutze das, wenn eine Spielinstallation existiert, du aber eine ganz neue in einem anderen Ordner willst. Die vorhandene Installation bleibt unberührt und wird danach ignoriert; der originale Installer wird mit dem neuen Ordner gestartet."
+
+msgid "Use the ignored installation again"
+msgstr "Ignorierte Installation wieder verwenden"
+
+msgid "The file dialog is not available: {0}."
+msgstr "Der Dateidialog ist nicht verfügbar: {0}."
+
+msgid "This folder cannot be used for a new copy: {0}"
+msgstr "Dieser Ordner kann nicht für eine neue Kopie verwendet werden: {0}"
+
+msgid "The configuration could not be saved: {0}"
+msgstr "Die Konfiguration konnte nicht gespeichert werden: {0}"
+
+msgid "The existing installation is now ignored by the launcher (nothing there was changed). The new copy goes into {0}. Choose how to install it below."
+msgstr "Die vorhandene Installation wird vom Launcher jetzt ignoriert (dort wurde nichts verändert). Die neue Kopie kommt nach {0}. Wähle unten, wie sie installiert wird."
+
+msgid "The ignored installation is visible to the launcher again."
+msgstr "Die ignorierte Installation ist für den Launcher wieder sichtbar."

@@ -32,6 +32,11 @@ pub fn finding(f: &Finding) -> (Msg, Msg) {
         "doctor.display_missing" => (m("no DISPLAY / WAYLAND_DISPLAY in the environment", &[]), m("start from a graphical session; the client needs a window", &[])),
         "doctor.vulkan_ok" => (m("a Vulkan driver description (ICD) is installed", &[]), none),
         "doctor.vulkan_missing" => (m("no Vulkan ICD found", &[]), m("DXVK needs a Vulkan driver (vulkan-radeon / nvidia-utils / vulkan-intel)", &[])),
+        "doctor.directx_ok" => (m("the Direct3D libraries of the DirectX June 2010 runtime are present", &[]), none),
+        "doctor.directx_missing" => (
+            Msg { id: "These Direct3D libraries are missing on this computer: {0}".into(), args: vec![Arg::Text(f.args.join(", "))] },
+            m("install Microsoft's DirectX End-User Runtimes (June 2010) yourself", &[]),
+        ),
         "prefix.override_rejected" => (m("manifest override rejected: {0}", &[0]), m("only the documented graphics DLLs with mode n/b may be overridden; recreate the prefix with `tsw-launch prefix init`", &[])),
         "prefix.native_unverified" => (m("native override for {0} has no verified component in the manifest", &[0]), m("a native override is only valid together with the installed, hash-recorded file", &[])),
         "prefix.component_changed" => (m("{0} changed since the prefix was prepared", &[0]), m("re-run `tsw-launch prefix init` to restore the recorded component", &[])),

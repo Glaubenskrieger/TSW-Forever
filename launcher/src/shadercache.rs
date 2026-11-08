@@ -1,6 +1,6 @@
 //! The client's local shader cache (`shader.cache.dx11.local3`, magic `SHCA`): inspection, reversible quarantine, restore.
 //!
-//! Why this exists (measured, the original component measurements): the client compiles shader permutations it does not find
+//! Why this exists (measured, documentation/third-party-components.md): the client compiles shader permutations it does not find
 //! in its shipped caches and stores the result in this file, and it reuses the file in every later run. A vertex shader that Wine's
 //! built-in compiler (vkd3d-shader) had produced stayed in the cache through every compiler change of the tests V1..V7 (black character clothing);
 //! with a rebuilt cache (V8, Microsoft's compiler through the native `d3dcompiler_43`) the clothing was correct.

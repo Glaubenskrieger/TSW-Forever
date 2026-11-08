@@ -94,6 +94,15 @@ impl Sink for Printer {
     }
 }
 
+/// The Wine program for the installer/patcher commands. Windows starts the programs itself, so nothing is searched there (the value is ignored).
+fn wine_for_install(spec: Option<PathBuf>) -> Result<PathBuf, String> {
+    if cfg!(windows) {
+        Ok(PathBuf::new())
+    } else {
+        pick_runner(spec)
+    }
+}
+
 fn pick_runner(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
     if let Some(r) = explicit {
         return Ok(r);
@@ -170,7 +179,8 @@ pub fn run(raw: Vec<String>) -> Result<u8, String> {
     let a = parse(rest)?;
     let state_file = install::state_path().ok_or("cannot determine where to store the installation state (no HOME / XDG_CONFIG_HOME)")?;
     let mut state = State::load(&state_file)?;
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    // HOME on Linux; USERPROFILE on Windows (where HOME is normally not set)
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
     if let Some(b) = &a.base {
         let l = Layout::new(b, home.as_deref()).map_err(|e| e.to_string())?;
         if state.base.as_ref() != Some(&l.base) {
@@ -232,6 +242,10 @@ pub fn run(raw: Vec<String>) -> Result<u8, String> {
                     "NOT recognised: running it needs your confirmation of exactly this fingerprint (install confirm)"
                 }
             );
+            Ok(0)
+        }
+        "runner" | "prefix" | "shaders" if !crate::winnative::Capabilities::current().wine_runtime => {
+            println!("`install {cmd}` is not needed on Windows: the original client runs natively, without a Wine runtime, prefix or Microsoft components added by the launcher.");
             Ok(0)
         }
         "runner" => {
@@ -308,10 +322,11 @@ pub fn run(raw: Vec<String>) -> Result<u8, String> {
                 state.save(&state_file)?;
             }
             install::run_gate(&l, &state, &install::OFFICIAL, &sha).map_err(e)?;
-            println!("{}", install::INSTALLER_NOTICE);
-            let mut cmd = install::installer_command(&l, &pick_runner(a.runner.clone())?);
+            println!("{}", if cfg!(windows) { install::INSTALLER_NOTICE_WINDOWS } else { install::INSTALLER_NOTICE });
+            let mut cmd = install::installer_command(&l, &wine_for_install(a.runner.clone())?);
             let pid = crate::launch::spawn_detached(&mut cmd, None).map_err(|x| format!("cannot start the installer: {x}"))?;
-            println!("the original installer was started (pid {pid}). Keep its default settings and path; afterwards run `install finish` (or pass --client if the game is not found).");
+            let who = if cfg!(windows) { "(Windows asks for permission itself if the installer needs it)".to_string() } else { format!("(pid {pid})") };
+            println!("the original installer was started {who}. Keep its default settings and path; afterwards run `install finish` (or pass --client if the game is not found).");
             Ok(0)
         }
         "patcher" => {
@@ -319,9 +334,10 @@ pub fn run(raw: Vec<String>) -> Result<u8, String> {
             let Some(patcher) = install::patcher_to_run(&install::assess(&l, &state, None).stage) else {
                 return Err("there is no original patcher to start yet (see install status)".into());
             };
-            let mut cmd = install::patcher_command(&l, &pick_runner(a.runner.clone())?, &patcher);
+            let mut cmd = install::patcher_command(&l, &wine_for_install(a.runner.clone())?, &patcher);
             let pid = crate::launch::spawn_detached(&mut cmd, None).map_err(|x| format!("cannot start the patcher: {x}"))?;
-            println!("the original patcher was started (pid {pid}); it downloads the game data. Then run `install finish`.");
+            let who = if cfg!(windows) { String::new() } else { format!(" (pid {pid})") };
+            println!("the original patcher was started{who}; it downloads the game data. Then run `install finish`.");
             Ok(0)
         }
         "import-rdb" => {
@@ -392,7 +408,23 @@ mod gate_tests {
     use crate::install::Evidence;
     use crate::patchlog::Verdict;
 
+    /// Windows: the game folder is resolved from `%ProgramFiles(x86)%`. Point it (once per test process) at a temporary folder, so that a test never
+    /// writes into the real Program Files (which fails without administrator rights and would touch a real game installation otherwise).
+    #[cfg(windows)]
+    fn fake_program_files() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let root = std::env::temp_dir().join(format!("tsw-test-programfiles-{}", std::process::id()));
+            for key in ["ProgramFiles(x86)", "ProgramFiles", "ProgramW6432"] {
+                std::env::set_var(key, &root);
+            }
+            std::env::set_var("TSW_LAUNCH_NO_SYSTEM_SEARCH", "1");
+        });
+    }
+
     fn world(tag: &str) -> (Layout, State) {
+        #[cfg(windows)]
+        fake_program_files();
         let base = std::env::temp_dir().join(format!("tsw-describe-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let layout = Layout { base };
