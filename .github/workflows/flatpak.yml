@@ -1,22 +1,20 @@
 # Builds the launcher Flatpak and offers it as a downloadable workflow artifact. MAIN ONLY: the job refuses every other ref (the trigger list alone
 # would be bypassable through a manual run from another branch), and it refuses a commit that is not part of main. Branches and pull requests are
-# covered by ci.yml, which builds no package. This workflow publishes nothing: the repository publication is the separate, manual release-flatpak.yml.
+# covered by ci.yml, which builds no package. This workflow publishes nothing: the signing and publication belong to the tag pipeline release.yml.
 # All logic lives in scripts/build_flatpak.sh; this file only prepares the machine and calls it.
 # It never commits, pushes, tags or publishes a release, uses no secrets, and contains no game data (the staged tree is scanned for that).
 name: flatpak
 
+# Started by hand (it then runs its own tests) or called by ci.yml on main AFTER all checks of that run passed (`tests-passed: true`): the tests are not repeated; the
+# dependency is the `needs` of the calling job, in the same run and for the same commit.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "launcher/**"
-      - "launcher-gui/**"
-      - "patcher/**"
-      - "packaging/**"
-      - "scripts/build_flatpak.sh"
-      - "scripts/check_flatpak_package.py"
-      - ".github/workflows/flatpak.yml"
+  workflow_call:
+    inputs:
+      tests-passed:
+        description: "The calling run (ci.yml) has already run the tests of this commit successfully (needs: checks)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,7 +34,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Check out the repository (read-only token, no stored credentials, full history for the main check)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -54,7 +52,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev
+          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev ostree gnupg
 
       - name: Allow the unprivileged user namespaces that flatpak-builder (bubblewrap) needs on Ubuntu 24.04 (setting of this runner VM only)
         run: |
@@ -70,7 +68,10 @@ jobs:
       - name: Fetch the crates of the committed Cargo.lock for the tests (the runner starts with an empty cargo cache; network step 1 of 2)
         run: scripts/build_flatpak.sh fetch --allow-network
 
-      - name: Tests (launcher, GUI, packaging policy) - before any package is built
+      - name: Tests (launcher, GUI, packaging policy) - before any package is built (skipped only when ci.yml has just passed them for this commit in this very run)
+        if: ${{ !inputs.tests-passed }}
+        env:
+          TSW_REQUIRE_TOOLS: "1"  # the signing, mirror, delta and release tests must run here (ostree and gnupg are installed above), never be skipped for a missing program
         run: scripts/build_flatpak.sh test
 
       - name: Check the package (manifest, staged sources, desktop file, metainfo)
@@ -86,7 +87,7 @@ jobs:
         run: scripts/build_flatpak.sh bundle
 
       - name: Upload the Flatpak as an artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tsw-launcher-flatpak-${{ steps.version.outputs.version }}-${{ github.sha }}
           path: |

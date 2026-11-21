@@ -1,11 +1,22 @@
 # Checks for every branch and every pull request: tests, formatting, lints, secrets scan, policy checks and the static Flatpak validation.
 # It builds NO package, uploads NO artifact, publishes nothing and uses no secrets. Full distribution packages are built only by
 # flatpak.yml on main (the policy test scripts/check_flatpak_package.py ci-policy enforces this split).
+#
+# Dependency structure (one run per commit, no duplicate tests): on main, after ALL checks of this run are green, the job `flatpak` calls flatpak.yml (`needs: checks`),
+# which builds the package without repeating the tests; a failed check therefore also saves the expensive package build. A manual run with `full` also calls windows.yml
+# (the complete multi-platform check). Pull requests and other branches never build a package. Development caches are used here only (see the cache step); release
+# workflows never use them.
 name: ci
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Run every part (no path filters) and, on main, also the Flatpak build and the Windows build/test"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,26 +27,88 @@ concurrency:
 
 env:
   FREEDESKTOP_VERSION: "25.08"
+  # development builds only: smaller, faster test builds and caches (no incremental state, no debug info); the release builds are separate workflows
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    outputs:
+      flatpak: ${{ steps.changes.outputs.flatpak }}
     steps:
-      - name: Check out the repository (read-only token, no stored credentials)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Check out the repository (read-only token, no stored credentials, full history to see what a push changed)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      # Fail-safe: a part is skipped ONLY when this step explicitly says `false`; an empty or missing answer (a broken step) means "run it". A required check that fails fails the job and
+      # therefore the run (the calling jobs below are then skipped, never green); only these optional parts can be skipped, and only for the reasons computed here.
+      - name: Decide which optional parts apply (conservative, so a manual full run, a new branch, a rewritten history or any doubt runs everything)
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
+          FULL: ${{ inputs.full }}
+        run: |
+          full=false
+          [ "$EVENT" = workflow_dispatch ] && [ "$FULL" = true ] && full=true
+          files=""
+          if [ "$full" = false ]; then
+            case "$EVENT" in
+              push) base="$BEFORE";;
+              pull_request) base="$(git merge-base "origin/$BASE_REF" HEAD 2>/dev/null || true)";;
+              *) base="";;
+            esac
+            if [ -n "$base" ] && ! printf '%s' "$base" | grep -qE '^0+$' && git cat-file -e "$base^{commit}" 2>/dev/null; then
+              files="$(git diff --name-only "$base" HEAD)"
+            fi
+            [ -n "$files" ] || full=true   # unknown or empty range: do everything
+          fi
+          # a part is skipped only when NOTHING of its area changed: documentation-only changes skip the Rust feature tests; the end-to-end test needs Flatpak, signing,
+          # script, workflow or Rust changes; the Flatpak build needs anything that can reach the package
+          rust=true; e2e=true; flatpak=true
+          if [ "$full" = false ]; then
+            printf '%s\n' "$files" | grep -qvE '^(documentation/|README\.md$|CHANGELOG\.md$|LICENSE$|THIRD-PARTY-NOTICES\.md$|AGENTS\.md$)' || rust=false
+            printf '%s\n' "$files" | grep -qE '^(scripts/|packaging/flatpak/|\.github/workflows/|launcher/|launcher-gui/|patcher/|\.cargo/)' || e2e=false
+            printf '%s\n' "$files" | grep -qE '^(launcher/|launcher-gui/|patcher/|packaging/|scripts/|\.cargo/|\.github/workflows/)' || flatpak=false
+          fi
+          echo "full=$full rust=$rust e2e=$e2e flatpak=$flatpak"
+          { echo "rust=$rust"; echo "e2e=$e2e"; echo "flatpak=$flatpak"; } >> "$GITHUB_OUTPUT"
 
       - name: Install check tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev
+          sudo apt-get install --yes --no-install-recommends rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools flatpak ostree gnupg curl libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev
 
       - name: Version and action pins
         run: |
           scripts/version.py check
           scripts/pin_actions.sh --check
+
+      - name: Rust version (part of the cache key)
+        id: rust
+        run: echo "version=$(rustc --version | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+
+      # Development cache: registry and the build outputs of the three crates. The key names the operating system, the exact compiler, every lockfile, the cargo configuration
+      # and this workflow file; the restore key only widens it to the same system and compiler, and cargo itself rebuilds whatever differs (a checkout makes the workspace crates
+      # new anyway). A cache is only ever restored from this branch or from main (GitHub's scoping) and is not used by any release workflow.
+      - name: Restore the development cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            patcher/target
+            launcher/target
+            launcher-gui/target
+          key: ci-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('patcher/Cargo.lock', 'launcher/Cargo.lock', 'launcher-gui/Cargo.lock', '.cargo/config.toml', '.github/workflows/ci.yml') }}
+          restore-keys: |
+            ci-${{ runner.os }}-${{ steps.rust.outputs.version }}-
 
       - name: Fetch the crates of the committed Cargo.lock (network step, read-only)
         run: scripts/build_flatpak.sh fetch --allow-network
@@ -48,8 +121,30 @@ jobs:
         run: |
           for d in patcher launcher launcher-gui; do (cd "$d" && cargo clippy --offline --locked --all-targets -- -D warnings); done
 
-      - name: Tests (Rust crates and Python policy tests)
+      # flatpak, ostree, gnupg and curl are installed above, before this step: the tests of the signing, the mirror of the live history, the static-delta update and the release script
+      # must RUN here (TSW_REQUIRE_TOOLS=1 turns a missing program into a failure instead of a silent skip); the e2e step below uses the same tools
+      - name: Tests (Rust crates and Python policy tests; the signing, mirror, delta and release tests must run, not be skipped)
+        env:
+          TSW_REQUIRE_TOOLS: "1"
         run: scripts/build_flatpak.sh test
+
+      # Features are additive: the same target folder reuses every dependency (only the two launcher crates are compiled again).
+      - name: Tests of the development feature windows-self-update (never part of a product)
+        if: ${{ steps.changes.outputs.rust != 'false' }}
+        run: |
+          for d in launcher launcher-gui; do (cd "$d" && cargo test --offline --locked --features windows-self-update); done
+
+      - name: Flatpak update chain end-to-end (temporary keys, local repository, throw-away Flatpak installation; no network, nothing published)
+        if: ${{ steps.changes.outputs.e2e != 'false' }}
+        run: scripts/e2e_flatpak_update.sh
+
+      - name: Tests of the TESTING channel build (only where the private overlay exists; own target folder so the stable build is not disturbed)
+        run: |
+          if [ -f packaging/channels/testing.conf ]; then
+            (cd launcher && TSW_CHANNEL=testing CARGO_TARGET_DIR="$RUNNER_TEMP/target-testing" cargo test --locked)
+          else
+            echo "no testing overlay in this tree (public source): nothing to test"
+          fi
 
       - name: Secrets scan of the tree
         run: python3 -I scripts/check_secrets_in_tree.py
@@ -59,3 +154,24 @@ jobs:
 
       - name: Static Flatpak validation (manifest, staged sources, desktop file, metainfo; nothing is built)
         run: scripts/build_flatpak.sh check
+
+  # The Flatpak build runs only after every check of this run is green (explicit dependency, same commit, nothing is tested twice) and only on main
+  # for changes that can affect the package (see the "Decide" step); flatpak.yml keeps its own main-only guards.
+  flatpak:
+    needs: checks
+    if: ${{ github.ref == 'refs/heads/main' && needs.checks.outputs.flatpak != 'false' }}
+    uses: ./.github/workflows/flatpak.yml
+    with:
+      tests-passed: true
+    permissions:
+      contents: read
+
+  # Complete manual check (workflow_dispatch with full=true on main): the Windows build and installer test as well.
+  windows:
+    needs: checks
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.full }}
+    uses: ./.github/workflows/windows.yml
+    with:
+      use_cache: true
+    permissions:
+      contents: read

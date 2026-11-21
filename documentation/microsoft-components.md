@@ -109,7 +109,3 @@ At the time of this private rc.4 assessment, public Phase 3 was unapproved. The 
 ## 7. Branding
 
 The project uses its own vector/generated icons, no Funcom logo payload. `assets/branding/Dramatisches Fraktions-Emblem mit Ankh.png` lacks established provenance/rights and stays private and excluded by source selection/public-snapshot checks. Do not delete the private file or move it into public source/marketing. Project descriptions explicitly state unofficial status and no Funcom affiliation; GPL grants no game/trademark rights.
-
-## 8. Windows (version 0.3.0)
-
-The assessment above concerns the Linux flow, in which the launcher downloads and extracts Microsoft components for the Wine prefix. The native Windows build does not do that. It only checks whether the 32-bit Direct3D libraries of the DirectX End-User Runtimes (June 2010) exist (`d3dx9_43.dll`, `d3dx11_43.dll`, `d3dcompiler_43.dll`). If something is missing, the user may click **Install DirectX components …**: the launcher then downloads Microsoft's own web installer `dxwebsetup.exe` from `download.microsoft.com`, compares it with a pinned SHA-256 value, checks Microsoft's Authenticode signature and starts it through the Windows shell. Microsoft's installer shows and records its own terms; the launcher passes no switch that accepts or hides them, extracts nothing and distributes no Microsoft file. Nothing is downloaded without that click.

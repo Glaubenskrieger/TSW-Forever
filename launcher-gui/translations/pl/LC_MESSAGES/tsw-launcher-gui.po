@@ -1,0 +1,1051 @@
+# Polski translation of the TSW launcher window.
+# Message ids are the English texts; keep placeholders {0}, {1}, ... unchanged. Technical names, commands and paths stay as they are.
+
+msgid ""
+msgstr ""
+"Project-Id-Version: tsw-launcher-gui\n"
+"Language: pl\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "The Secret World – Forever"
+msgstr "The Secret World – Forever"
+
+msgid "Are you sure you want to exit the launcher?"
+msgstr "Czy na pewno chcesz zamknąć launcher?"
+
+msgid "Yes, exit"
+msgstr "Tak, zamknij"
+
+msgid "No, go back"
+msgstr "Nie, wróć"
+
+msgid "STARTING …"
+msgstr "URUCHAMIANIE …"
+
+msgid "PLAY"
+msgstr "GRAJ"
+
+msgid "Skip intro videos"
+msgstr "Pomiń filmy wprowadzające"
+
+msgid "F O R E V E R"
+msgstr "F O R E V E R"
+
+msgid "Advanced view"
+msgstr "Widok zaawansowany"
+
+msgid "Normally not needed: everything is detected automatically. Here you can see what was detected and, in exceptional cases, enter your own values."
+msgstr "Zwykle niepotrzebne: wszystko jest wykrywane automatycznie. Tutaj zobaczysz, co wykryto, a w wyjątkowych przypadkach możesz wpisać własne wartości."
+
+msgid "DETECTED COMPONENTS"
+msgstr "WYKRYTE SKŁADNIKI"
+
+msgid "Client"
+msgstr "Klient"
+
+msgid "Wine / Proton"
+msgstr "Wine / Proton"
+
+msgid "Wine prefix"
+msgstr "Prefiks Wine"
+
+msgid "MANUAL OVERRIDES"
+msgstr "RĘCZNE USTAWIENIA"
+
+msgid "Only fill in if the automatic detection fails. Empty fields mean “automatic”."
+msgstr "Wypełniaj tylko wtedy, gdy automatyczne wykrywanie zawiedzie. Puste pole oznacza „automatycznie”."
+
+msgid "Client (TheSecretWorldDX11.exe)"
+msgstr "Klient (TheSecretWorldDX11.exe)"
+
+msgid "automatic"
+msgstr "automatycznie"
+
+msgid "Wine / Proton (…/files/bin/wine)"
+msgstr "Wine / Proton (…/files/bin/wine)"
+
+msgid "automatic (managed prefix)"
+msgstr "automatycznie (prefiks zarządzany)"
+
+msgid "Virtual Wine desktop (compatibility mode)"
+msgstr "Wirtualny pulpit Wine (tryb zgodności)"
+
+msgid "CHECKS"
+msgstr "KONTROLE"
+
+msgid "Check again"
+msgstr "Sprawdź ponownie"
+
+msgid "Check and update prefix"
+msgstr "Sprawdź i zaktualizuj prefiks"
+
+msgid "LANGUAGE"
+msgstr "JĘZYK"
+
+msgid "Language of the launcher"
+msgstr "Język launchera"
+
+msgid "ADVANCED VIEW"
+msgstr "WIDOK ZAAWANSOWANY"
+
+msgid "Automatic (system language)"
+msgstr "Automatycznie (język systemu)"
+
+msgid "Checking"
+msgstr "Sprawdzanie"
+
+msgid "Downloading"
+msgstr "Pobieranie"
+
+msgid "Verifying"
+msgstr "Weryfikacja"
+
+msgid "Installing"
+msgstr "Instalowanie"
+
+msgid "{0} – {1}"
+msgstr "{0} – {1}"
+
+msgid "{0} of {1}"
+msgstr "{0} z {1}"
+
+msgid "{0} left"
+msgstr "pozostało {0}"
+
+msgid "Checking the Wine/Proton runtime"
+msgstr "Sprawdzanie środowiska uruchomieniowego Wine/Proton"
+
+msgid "Creating the Wine prefix"
+msgstr "Tworzenie prefiksu Wine"
+
+msgid "Checking the window metrics"
+msgstr "Sprawdzanie metryk okna"
+
+msgid "Installing the DXVK and vkd3d components"
+msgstr "Instalowanie składników DXVK i vkd3d"
+
+msgid "The Wine prefix could not be prepared: {0}"
+msgstr "Nie udało się przygotować prefiksu Wine: {0}"
+
+msgid "The Wine prefix is unusable. Details are in the advanced view."
+msgstr "Prefiks Wine nie nadaje się do użytku. Szczegóły są w widoku zaawansowanym."
+
+msgid "Saving failed: {0}"
+msgstr "Zapis nie powiódł się: {0}"
+
+msgid "Configuration not readable: {0}"
+msgstr "Nie można odczytać konfiguracji: {0}"
+
+msgid "Getting ready …"
+msgstr "Przygotowywanie …"
+
+msgid "The game is starting …"
+msgstr "Gra się uruchamia …"
+
+msgid "Wine prefix {0} is not set up"
+msgstr "Prefiks Wine {0} nie jest skonfigurowany"
+
+msgid "it is created automatically for a managed prefix"
+msgstr "jest tworzony automatycznie dla prefiksu zarządzanego"
+
+msgid "{0} local checks passed"
+msgstr "Kontrole lokalne zakończone pomyślnie: {0}"
+
+msgid "Not ready: {0}. Details are in the advanced view."
+msgstr "Nie jest gotowe: {0}. Szczegóły są w widoku zaawansowanym."
+
+msgid "Ready. Notes are in the advanced view."
+msgstr "Gotowe. Uwagi są w widoku zaawansowanym."
+
+msgid "Ready."
+msgstr "Gotowe."
+
+msgid "Size of the virtual desktop: use the form 1920x1200 (320 to 16384)"
+msgstr "Rozmiar wirtualnego pulpitu: użyj formatu 1920x1200 (od 320 do 16384)"
+
+msgid "The start command could not be run ({0}): {1}"
+msgstr "Nie udało się wykonać polecenia uruchamiającego ({0}): {1}"
+
+msgid "Starting is not possible: {0} ({1})"
+msgstr "Uruchomienie jest niemożliwe: {0} ({1})"
+
+msgid "Starting is not possible: {0}"
+msgstr "Uruchomienie jest niemożliwe: {0}"
+
+msgid "Starting failed: {0}"
+msgstr "Uruchomienie nie powiodło się: {0}"
+
+msgid "Starting failed (exit code {0})."
+msgstr "Uruchomienie nie powiodło się (kod zakończenia {0})."
+
+msgid "Several runtimes were found; {0} is used."
+msgstr "Znaleziono kilka środowisk uruchomieniowych; używane jest {0}."
+
+msgid "The runtime {0} has not been tested with this client yet."
+msgstr "Środowisko uruchomieniowe {0} nie zostało jeszcze przetestowane z tym klientem."
+
+msgid "No TSW installation was found. Set one up under INSTALLATION in the advanced view, adopt an existing installation, or enter the client there."
+msgstr "Nie znaleziono instalacji TSW. Skonfiguruj ją w sekcji INSTALACJA w widoku zaawansowanym, przejmij istniejącą instalację albo wskaż tam klienta."
+
+msgid "Several TSW test installations were found ({0}). Please choose one in the advanced view."
+msgstr "Znaleziono kilka testowych instalacji TSW ({0}). Wybierz jedną w widoku zaawansowanym."
+
+msgid "No suitable Wine/Proton runtime was found (searched: Steam compatibility tools with DXVK and vkd3d, for example GE-Proton). Install one or enter the Wine program in the advanced view."
+msgstr "Nie znaleziono odpowiedniego środowiska Wine/Proton (przeszukano: narzędzia zgodności Steam z DXVK i vkd3d, np. GE-Proton). Zainstaluj je albo wskaż program Wine w widoku zaawansowanym."
+
+msgid "32-bit {0} found: {1}"
+msgstr "Znaleziono 32-bitowy {0}: {1}"
+
+msgid "32-bit {0} not found in {1}"
+msgstr "Nie znaleziono 32-bitowego {0} w {1}"
+
+msgid "install {0}; without it the 32-bit client has no Wine font engine (AddFontMemResourceEx fails). A runtime that ships 32-bit libraries (Steam Linux Runtime) also avoids this."
+msgstr "zainstaluj {0}; bez niego 32-bitowy klient nie ma silnika czcionek Wine (AddFontMemResourceEx kończy się błędem). Środowisko dostarczające biblioteki 32-bitowe (Steam Linux Runtime) również temu zapobiega."
+
+msgid "32-bit {0} not found"
+msgstr "Nie znaleziono 32-bitowego {0}"
+
+msgid "install {0}: {1}"
+msgstr "zainstaluj {0}: {1}"
+
+msgid "XInput2: without it Wine refuses cursor clipping and a full-screen client spins in a message loop"
+msgstr "XInput2: bez niego Wine odmawia ograniczenia kursora, a klient w trybie pełnoekranowym zapętla się w pętli komunikatów"
+
+msgid "display mode changes (ChangeDisplaySettings) fail"
+msgstr "zmiany trybu wyświetlania (ChangeDisplaySettings) kończą się błędem"
+
+msgid "custom mouse cursors cannot be shown"
+msgstr "niestandardowe kursory myszy nie mogą być wyświetlane"
+
+msgid "pointer barriers/cursor handling are unavailable"
+msgstr "bariery wskaźnika i obsługa kursora są niedostępne"
+
+msgid "window composition features are unavailable"
+msgstr "funkcje kompozycji okien są niedostępne"
+
+msgid "multi-monitor geometry is unavailable"
+msgstr "geometria wielu monitorów jest niedostępna"
+
+msgid "rendering extensions are unavailable"
+msgstr "rozszerzenia renderowania są niedostępne"
+
+msgid "client executable {0} is not readable: {1}"
+msgstr "plik wykonywalny klienta {0} nie jest odczytywalny: {1}"
+
+msgid "give --exe or client_exe a path to TheSecretWorld[DX11].exe"
+msgstr "podaj w --exe lub client_exe ścieżkę do TheSecretWorld[DX11].exe"
+
+msgid "{0} is not a Windows executable"
+msgstr "{0} nie jest plikiem wykonywalnym systemu Windows"
+
+msgid "wrong file?"
+msgstr "zły plik?"
+
+msgid "client executable recognised: {0}"
+msgstr "rozpoznano plik wykonywalny klienta: {0}"
+
+msgid "{0} is not a recognised client build (patcher-key check not found)"
+msgstr "{0} nie jest rozpoznaną wersją klienta (nie znaleziono kontroli klucza patchera)"
+
+msgid "only TheSecretWorld.exe / TheSecretWorldDX11.exe can be started"
+msgstr "można uruchomić tylko TheSecretWorld.exe / TheSecretWorldDX11.exe"
+
+msgid "wine program found: {0}"
+msgstr "znaleziono program wine: {0}"
+
+msgid "wine program {0} not found"
+msgstr "nie znaleziono programu wine {0}"
+
+msgid "use --runner /path/to/wine (a Proton/GE-Proton 'files/bin/wine') or install wine"
+msgstr "użyj --runner /ścieżka/do/wine (plik „files/bin/wine” z Proton/GE-Proton) albo zainstaluj wine"
+
+msgid "prefix exists: {0}"
+msgstr "prefiks istnieje: {0}"
+
+msgid "prefix {0} does not exist yet"
+msgstr "prefiks {0} jeszcze nie istnieje"
+
+msgid "wine will create an empty prefix; the game needs the usual components (DXVK, d3dx, vcrun) installed in it"
+msgstr "wine utworzy pusty prefiks; gra potrzebuje w nim zwykłych składników (DXVK, d3dx, vcrun)"
+
+msgid "no prefix set (wine would use ~/.wine)"
+msgstr "nie ustawiono prefiksu (wine użyłby ~/.wine)"
+
+msgid "pass --prefix or prefix = ... in the config"
+msgstr "podaj --prefix lub prefix = ... w konfiguracji"
+
+msgid "a display is available (DISPLAY or WAYLAND_DISPLAY)"
+msgstr "dostępny jest ekran (DISPLAY lub WAYLAND_DISPLAY)"
+
+msgid "no DISPLAY / WAYLAND_DISPLAY in the environment"
+msgstr "brak DISPLAY / WAYLAND_DISPLAY w środowisku"
+
+msgid "start from a graphical session; the client needs a window"
+msgstr "uruchom z sesji graficznej; klient potrzebuje okna"
+
+msgid "a Vulkan driver description (ICD) is installed"
+msgstr "zainstalowano opis sterownika Vulkan (ICD)"
+
+msgid "no Vulkan ICD found"
+msgstr "nie znaleziono ICD Vulkan"
+
+msgid "DXVK needs a Vulkan driver (vulkan-radeon / nvidia-utils / vulkan-intel)"
+msgstr "DXVK potrzebuje sterownika Vulkan (vulkan-radeon / nvidia-utils / vulkan-intel)"
+
+msgid "manifest override rejected: {0}"
+msgstr "odrzucono nadpisanie z manifestu: {0}"
+
+msgid "only the documented graphics DLLs with mode n/b may be overridden; recreate the prefix with `tsw-launch prefix init`"
+msgstr "nadpisać można tylko udokumentowane graficzne biblioteki DLL w trybie n/b; utwórz prefiks ponownie poleceniem `tsw-launch prefix init`"
+
+msgid "native override for {0} has no verified component in the manifest"
+msgstr "natywne nadpisanie {0} nie ma zweryfikowanego składnika w manifeście"
+
+msgid "a native override is only valid together with the installed, hash-recorded file"
+msgstr "natywne nadpisanie jest ważne tylko razem z zainstalowanym plikiem o zapisanym skrócie"
+
+msgid "{0} changed since the prefix was prepared"
+msgstr "{0} zmienił się od przygotowania prefiksu"
+
+msgid "re-run `tsw-launch prefix init` to restore the recorded component"
+msgstr "uruchom ponownie `tsw-launch prefix init`, aby przywrócić zapisany składnik"
+
+msgid "{0} from the manifest is missing"
+msgstr "brakuje {0} z manifestu"
+
+msgid "run `tsw-launch prefix init`"
+msgstr "uruchom `tsw-launch prefix init`"
+
+msgid "manifest: {0} components unchanged, overrides {1}"
+msgstr "manifest: niezmienionych składników: {0}, nadpisań: {1}"
+
+msgid "prefix has no WindowMetrics yet"
+msgstr "prefiks nie ma jeszcze WindowMetrics"
+
+msgid "run `tsw-launch prefix init` or start Wine once in this prefix"
+msgstr "uruchom `tsw-launch prefix init` lub raz uruchom Wine w tym prefiksie"
+
+msgid "window metric {0}={1}"
+msgstr "metryka okna {0}={1}"
+
+msgid "window metric {0}={1} is implausible (expected {2}..={3})"
+msgstr "metryka okna {0}={1} jest nieprawdopodobna (oczekiwano {2}..={3})"
+
+msgid "the prefix was created without the 32-bit FreeType/Fontconfig libraries; install them and create a NEW prefix (`tsw-launch prefix init`)"
+msgstr "prefiks utworzono bez 32-bitowych bibliotek FreeType/Fontconfig; zainstaluj je i utwórz NOWY prefiks (`tsw-launch prefix init`)"
+
+msgid "{0} is not an initialised Wine prefix (no user.reg)"
+msgstr "{0} nie jest zainicjowanym prefiksem Wine (brak user.reg)"
+
+msgid "run `tsw-launch prefix init --prefix <dir> --runner <wine>`"
+msgstr "uruchom `tsw-launch prefix init --prefix <folder> --runner <wine>`"
+
+msgid "{0} differs from the runtime's copy"
+msgstr "{0} różni się od kopii ze środowiska uruchomieniowego"
+
+msgid "re-run `tsw-launch prefix init` to refresh the components"
+msgstr "uruchom ponownie `tsw-launch prefix init`, aby odświeżyć składniki"
+
+msgid "{0} is missing"
+msgstr "brakuje {0}"
+
+msgid "runtime component {0} unreadable: {1}"
+msgstr "składnik środowiska uruchomieniowego {0} jest nieczytelny: {1}"
+
+msgid "use a GE-Proton/Proton runtime that ships DXVK and vkd3d"
+msgstr "użyj środowiska GE-Proton/Proton, które zawiera DXVK i vkd3d"
+
+msgid "no component manifest: DXVK is not enabled for this prefix"
+msgstr "brak manifestu składników: DXVK nie jest włączony dla tego prefiksu"
+
+msgid "APPEARANCE"
+msgstr "WYGLĄD"
+
+msgid "Colour theme"
+msgstr "Motyw kolorystyczny"
+
+msgid "Templars"
+msgstr "Templariusze"
+
+msgid "Dark red and black. The classic look of the launcher."
+msgstr "Ciemna czerwień i czerń. Klasyczny wygląd launchera."
+
+msgid "Illuminati"
+msgstr "Iluminaci"
+
+msgid "Deep blue and black with cool accents."
+msgstr "Głęboki błękit i czerń z chłodnymi akcentami."
+
+msgid "Dragon"
+msgstr "Smok"
+
+msgid "Dark green and black, quiet and mysterious."
+msgstr "Ciemna zieleń i czerń, spokojna i tajemnicza."
+
+msgid "Neutral / Zuberi"
+msgstr "Neutralny / Zuberi"
+
+msgid "Anthracite and silver. Neutral, not tied to any of the three factions."
+msgstr "Antracyt i srebro. Neutralny, niezwiązany z żadną z trzech frakcji."
+
+msgid "Frame rate limit: unlimited"
+msgstr "Limit klatek na sekundę: bez limitu"
+
+msgid "Frame rate limit: {} FPS"
+msgstr "Limit klatek na sekundę: {} FPS"
+
+msgid "Unlimited"
+msgstr "Bez limitu"
+
+msgid "Show the FPS counter in the game (DXVK)"
+msgstr "Pokaż licznik FPS w grze (DXVK)"
+
+msgid "Default: 60 FPS. Free from 30 to 240 FPS, or unlimited. Applies at the next game start."
+msgstr "Domyślnie: 60 FPS. Dowolnie od 30 do 240 FPS lub bez limitu. Obowiązuje od następnego uruchomienia gry."
+
+msgid "SHADER CACHE"
+msgstr "PAMIĘĆ PODRĘCZNA SHADERÓW"
+
+msgid "Rebuild shader cache"
+msgstr "Odbuduj pamięć podręczną shaderów"
+
+msgid "Undo"
+msgstr "Cofnij"
+
+msgid "The old cache is only set aside, never deleted; the game builds a new one at the next start."
+msgstr "Stara pamięć podręczna jest tylko odkładana na bok, nigdy usuwana; gra tworzy nową przy następnym uruchomieniu."
+
+msgid "no client found yet"
+msgstr "nie znaleziono jeszcze klienta"
+
+msgid "{0} of {1} shader(s) were compiled by Wine's built-in compiler"
+msgstr "Shaderów skompilowanych wbudowanym kompilatorem Wine: {0} z {1}"
+
+msgid "{0} shader(s), none compiled by Wine's built-in compiler"
+msgstr "shaderów: {0}, żaden nie został skompilowany wbudowanym kompilatorem Wine"
+
+msgid "no local shader cache yet"
+msgstr "brak jeszcze lokalnej pamięci podręcznej shaderów"
+
+msgid "the local shader cache could not be inspected"
+msgstr "nie udało się sprawdzić lokalnej pamięci podręcznej shaderów"
+
+msgid "{0} set aside"
+msgstr "odłożono na bok: {0}"
+
+msgid "The previous shader cache was restored."
+msgstr "Przywrócono poprzednią pamięć podręczną shaderów."
+
+msgid "The shader cache was set aside; the game builds a new one at the next start."
+msgstr "Pamięć podręczna shaderów została odłożona na bok; gra tworzy nową przy następnym uruchomieniu."
+
+msgid "Shader cache: {0}"
+msgstr "Pamięć podręczna shaderów: {0}"
+
+msgid "no local shader cache yet (the game creates it on the first run)"
+msgstr "brak jeszcze lokalnej pamięci podręcznej shaderów (gra tworzy ją przy pierwszym uruchomieniu)"
+
+msgid "local shader cache could not be inspected: {0}"
+msgstr "nie udało się sprawdzić lokalnej pamięci podręcznej shaderów: {0}"
+
+msgid "the game ignores or rebuilds an unreadable cache; nothing was changed"
+msgstr "gra ignoruje lub odbudowuje nieczytelną pamięć podręczną; nic nie zmieniono"
+
+msgid "the local shader cache holds {0} of {1} shader(s) compiled by Wine's built-in compiler (vkd3d-shader)"
+msgstr "lokalna pamięć podręczna shaderów zawiera {0} z {1} shaderów skompilowanych wbudowanym kompilatorem Wine (vkd3d-shader)"
+
+msgid "reused in every run; in our tests such an entry kept character clothing black until the cache was rebuilt. This is a fact about the file, not proof that a shader is wrong. Rebuild with `tsw-launch cache quarantine` (reversible: `cache restore`)"
+msgstr "używana przy każdym uruchomieniu; w naszych testach taki wpis powodował, że ubrania postaci pozostawały czarne, dopóki pamięć podręczna nie została odbudowana. To fakt dotyczący pliku, a nie dowód, że shader jest błędny. Odbuduj poleceniem `tsw-launch cache quarantine` (odwracalne: `cache restore`)"
+
+msgid "the local shader cache was last used with the shader compiler setup {0}, this prefix has {1}"
+msgstr "lokalna pamięć podręczna shaderów była ostatnio używana z konfiguracją kompilatora shaderów {0}, ten prefiks ma {1}"
+
+msgid "entries compiled under the old setup stay in the cache; consider rebuilding it with `tsw-launch cache quarantine` (reversible)"
+msgstr "wpisy skompilowane w starej konfiguracji pozostają w pamięci podręcznej; rozważ jej odbudowanie poleceniem `tsw-launch cache quarantine` (odwracalne)"
+
+msgid "local shader cache: {0} shader(s), none compiled by Wine's built-in compiler"
+msgstr "lokalna pamięć podręczna shaderów: shaderów: {0}, żaden nie został skompilowany wbudowanym kompilatorem Wine"
+
+msgid "COMPILER PROFILE"
+msgstr "PROFIL KOMPILATORA"
+
+msgid "not set"
+msgstr "nie ustawiono"
+
+msgid "Install profile"
+msgstr "Zainstaluj profil"
+
+msgid "Remove profile"
+msgstr "Usuń profil"
+
+msgid "DIAGNOSTICS"
+msgstr "DIAGNOSTYKA"
+
+msgid "Enable diagnostic logging"
+msgstr "Włącz rejestrowanie diagnostyczne"
+
+msgid "Open log folder"
+msgstr "Otwórz folder dzienników"
+
+msgid "Create diagnostic package"
+msgstr "Utwórz pakiet diagnostyczny"
+
+msgid "Off by default. When on, each start writes a private log (newest 10 kept) next to the configuration. Logs and diagnostic packages are masked, but can still contain personal data such as paths and hardware; nothing is ever sent anywhere. Read a package before you share it."
+msgstr "Domyślnie wyłączone. Po włączeniu każde uruchomienie zapisuje prywatny dziennik (przechowywanych jest 10 najnowszych) obok konfiguracji. Dzienniki i pakiety diagnostyczne są maskowane, ale nadal mogą zawierać dane osobowe, takie jak ścieżki i dane o sprzęcie; nic nie jest nigdzie wysyłane. Przeczytaj pakiet, zanim go udostępnisz."
+
+msgid "Basic (launcher events)"
+msgstr "Podstawowa (zdarzenia)"
+
+msgid "Detailed (with game and DXVK output)"
+msgstr "Szczegółowa (z komunikatami gry i DXVK)"
+
+msgid "no prefix found yet"
+msgstr "nie znaleziono jeszcze prefiksu"
+
+msgid "Compiler profile {0} is installed."
+msgstr "Profil kompilatora {0} jest zainstalowany."
+
+msgid "No compiler profile installed. The tested configuration uses it (see the hint in the checks)."
+msgstr "Nie zainstalowano profilu kompilatora. Przetestowana konfiguracja go używa (zobacz wskazówkę w kontrolach)."
+
+msgid "The prefix is not prepared yet."
+msgstr "Prefiks nie jest jeszcze przygotowany."
+
+msgid "No prefix found yet."
+msgstr "Nie znaleziono jeszcze prefiksu."
+
+msgid "The compiler profile was installed."
+msgstr "Profil kompilatora został zainstalowany."
+
+msgid "Compiler profile: {0}"
+msgstr "Profil kompilatora: {0}"
+
+msgid "The compiler profile was removed; the previous files are back."
+msgstr "Profil kompilatora został usunięty; poprzednie pliki wróciły."
+
+msgid "Log folder: {0}"
+msgstr "Folder dzienników: {0}"
+
+msgid "The log folder could not be opened automatically. It is here: {0}"
+msgstr "Nie udało się automatycznie otworzyć folderu dzienników. Znajduje się tutaj: {0}"
+
+msgid "Diagnostic package written: {0}. Read it before you share it; nothing was sent."
+msgstr "Zapisano pakiet diagnostyczny: {0}. Przeczytaj go, zanim go udostępnisz; nic nie zostało wysłane."
+
+msgid "The diagnostic package could not be created: {0}"
+msgstr "Nie udało się utworzyć pakietu diagnostycznego: {0}"
+
+msgid "compiler profile {0} installed"
+msgstr "zainstalowano profil kompilatora {0}"
+
+msgid "no native shader-compiler profile is installed in this prefix"
+msgstr "w tym prefiksie nie zainstalowano natywnego profilu kompilatora shaderów"
+
+msgid "the tested configuration uses Microsoft's d3dcompiler_43 and the D3DX libraries; with Wine's built-in compiler character clothing was black in our tests. Install with `tsw-launch prefix native-install --native-dir <folder with the 32-bit DLLs>` (advanced view)"
+msgstr "przetestowana konfiguracja używa d3dcompiler_43 firmy Microsoft i bibliotek D3DX; z wbudowanym kompilatorem Wine ubrania postaci były w naszych testach czarne. Zainstaluj poleceniem `tsw-launch prefix native-install --native-dir <folder z 32-bitowymi bibliotekami DLL>` (widok zaawansowany)"
+
+msgid "automatic"
+msgstr "automatycznie"
+
+msgid "this session already runs inside gamescope (Game Mode)"
+msgstr "ta sesja już działa wewnątrz gamescope (tryb gry)"
+
+msgid "INSTALLATION"
+msgstr "INSTALACJA"
+
+msgid "Cancel download"
+msgstr "Anuluj pobieranie"
+
+msgid "The home folder is unknown: enter the full installation folder"
+msgstr "Folder domowy jest nieznany: wpisz pełną ścieżkę folderu instalacji"
+
+msgid "Installation folder: {0}"
+msgstr "Folder instalacji: {0}"
+
+msgid "Not possible yet: {0}"
+msgstr "Jeszcze niemożliwe: {0}"
+
+msgid "Installed: {0}"
+msgstr "Zainstalowano: {0}"
+
+msgid "Use this installation"
+msgstr "Użyj tej instalacji"
+
+msgid "No installation yet. The folders below the chosen installation folder will be created first."
+msgstr "Brak jeszcze instalacji. Najpierw zostaną utworzone foldery w wybranym folderze instalacji."
+
+msgid "Create folders"
+msgstr "Utwórz foldery"
+
+msgid "The download was interrupted after {0} bytes and will be resumed."
+msgstr "Pobieranie przerwano po {0} bajtach i zostanie wznowione."
+
+msgid "The folders are ready. Next: the original installer."
+msgstr "Foldery są gotowe. Dalej: oryginalny instalator."
+
+msgid "Import installer file"
+msgstr "Importuj plik instalatora"
+
+msgid "Download installer"
+msgstr "Pobierz instalator"
+
+msgid "The installer is in the cache and its checksum matches. Next: the Wine prefix."
+msgstr "Instalator jest w pamięci podręcznej, a jego suma kontrolna się zgadza. Dalej: prefiks Wine."
+
+msgid "Create the Wine prefix"
+msgstr "Utwórz prefiks Wine"
+
+msgid "Run the original installer"
+msgstr "Uruchom oryginalny instalator"
+
+msgid "Choose the installation folder."
+msgstr "Wybierz folder instalacji."
+
+msgid "Installation step failed: {0}"
+msgstr "Krok instalacji nie powiódł się: {0}"
+
+msgid "The installer was downloaded and verified."
+msgstr "Instalator został pobrany i zweryfikowany."
+
+msgid "The Wine prefix is ready."
+msgstr "Prefiks Wine jest gotowy."
+
+msgid "Cancelled. The partial download is kept and will be resumed."
+msgstr "Anulowano. Częściowo pobrany plik zostaje zachowany i pobieranie zostanie wznowione."
+
+msgid "The folders were created."
+msgstr "Foldery zostały utworzone."
+
+msgid "Installation stored: {0}"
+msgstr "Zapisano instalację: {0}"
+
+msgid "{0} {1}"
+msgstr "{0} {1}"
+
+msgid "Only the original patcher is installed. Run it to fetch the game data; this window continues by itself when it reports that nothing is left to fetch."
+msgstr "Zainstalowano tylko oryginalny patcher. Uruchom go, aby pobrać dane gry; to okno samo kontynuuje, gdy patcher zgłosi, że nie ma już nic do pobrania."
+
+msgid "Run the original patcher"
+msgstr "Uruchom oryginalny patcher"
+
+msgid "The installer is in the cache; its fingerprint is being computed … Next: the Wine prefix."
+msgstr "Instalator jest w pamięci podręcznej; trwa obliczanie jego odcisku … Dalej: prefiks Wine."
+
+msgid "The installer is in the cache, but it is not known to be genuine (SHA-256 {0}). Next: the Wine prefix."
+msgstr "Instalator jest w pamięci podręcznej, ale nie wiadomo, czy jest autentyczny (SHA-256 {0}). Dalej: prefiks Wine."
+
+msgid "Checking the installer fingerprint …"
+msgstr "Sprawdzanie odcisku instalatora …"
+
+msgid "Please use the suggested default settings while installing The Secret World and do not change the installation path in particular. The suggested Windows path is inside the Wine/Proton environment managed by our launcher."
+msgstr "Podczas instalacji The Secret World użyj sugerowanych ustawień domyślnych i przede wszystkim nie zmieniaj ścieżki instalacji. Sugerowana ścieżka systemu Windows znajduje się wewnątrz środowiska Wine/Proton zarządzanego przez nasz launcher."
+
+msgid "When the installer is finished, press the button again."
+msgstr "Gdy instalator zakończy pracę, naciśnij przycisk ponownie."
+
+msgid "The installer fingerprint is still being computed; confirm again in a moment"
+msgstr "Odcisk instalatora jest wciąż obliczany; potwierdź ponownie za chwilę"
+
+msgid "I checked this installer file; allow exactly this file (its fingerprint) to run"
+msgstr "Sprawdziłem ten plik instalatora; zezwalam na uruchomienie dokładnie tego pliku (jego odcisku)"
+
+msgid "Installer copied. Its SHA-256 is {0}. It is not trusted until you confirm exactly this fingerprint."
+msgstr "Skopiowano instalator. Jego SHA-256 to {0}. Nie jest zaufany, dopóki nie potwierdzisz dokładnie tego odcisku."
+
+msgid "A launcher update is available. Install it with your system's software center, or run: flatpak update {0}. Then restart the launcher."
+msgstr "Dostępna jest aktualizacja launchera. Zainstaluj ją w centrum oprogramowania systemu lub uruchom: flatpak update {0}. Następnie uruchom launcher ponownie."
+
+msgid "The file dialog is not available: {0}. Type the path of the installer instead."
+msgstr "Okno wyboru plików jest niedostępne: {0}. Wpisz zamiast tego ścieżkę instalatora."
+
+msgid "The Wine prefix and the native shader profile are ready."
+msgstr "Prefiks Wine i natywny profil shaderów są gotowe."
+
+msgid "GAMESCOPE (OPTIONAL)"
+msgstr "GAMESCOPE (OPCJONALNIE)"
+
+msgid "Run the game in a gamescope window"
+msgstr "Uruchom grę w oknie gamescope"
+
+msgid "Off by default and not needed: the normal start works without gamescope. If switched on, gamescope must be installed; the picture is shown at the full screen resolution without scaling, so the user interface keeps its size. Cannot be combined with the virtual desktop."
+msgstr "Domyślnie wyłączone i niepotrzebne: zwykłe uruchomienie działa bez gamescope. Po włączeniu gamescope musi być zainstalowany; obraz jest wyświetlany w rozdzielczości pełnego ekranu bez skalowania, więc interfejs zachowuje swój rozmiar. Nie można łączyć z wirtualnym pulpitem."
+
+msgid "Gamescope cannot be combined with the virtual desktop: turn one of them off"
+msgstr "Gamescope nie może być łączony z wirtualnym pulpitem: wyłącz jedno z nich"
+
+msgid "Gamescope is switched on, but was not found"
+msgstr "Gamescope jest włączony, ale nie został znaleziony"
+
+msgid "Install the Flatpak extension org.freedesktop.Platform.VulkanLayer.gamescope (matching the runtime branch), or switch Gamescope off: the normal start needs neither."
+msgstr "Zainstaluj rozszerzenie Flatpak org.freedesktop.Platform.VulkanLayer.gamescope (zgodne z gałęzią środowiska uruchomieniowego) albo wyłącz Gamescope: zwykłe uruchomienie nie potrzebuje żadnego z nich."
+
+msgid "Install the gamescope package of the distribution (SteamOS and the Steam Machine ship it), or switch Gamescope off: the normal start needs neither."
+msgstr "Zainstaluj pakiet gamescope z dystrybucji (SteamOS i Steam Machine go zawierają) albo wyłącz Gamescope: zwykłe uruchomienie nie potrzebuje żadnego z nich."
+
+msgid "Gamescope found ({0}), {1}"
+msgstr "Znaleziono Gamescope ({0}), {1}"
+
+msgid "Start the game without Gamescope here: Game Mode already provides it."
+msgstr "Uruchom tutaj grę bez Gamescope: tryb gry już go zapewnia."
+
+msgid "An earlier installation inside the Flatpak data folder was found. It is only reported and never used or changed; the game is installed in the folder above."
+msgstr "Znaleziono wcześniejszą instalację wewnątrz folderu danych Flatpaka. Jest ona tylko zgłaszana i nigdy nie jest używana ani zmieniana; gra jest zainstalowana w folderze wyżej."
+
+msgid "CONTINUE INSTALLATION"
+msgstr "KONTYNUUJ INSTALACJĘ"
+
+msgid "INSTALL THE GAME"
+msgstr "ZAINSTALUJ GRĘ"
+
+msgid "Installation folder"
+msgstr "Folder instalacji"
+
+msgid "No Wine/Proton runner was found. Agree to the downloads and press the button again."
+msgstr "Nie znaleziono środowiska Wine/Proton. Zaakceptuj pobieranie i naciśnij przycisk ponownie."
+
+msgid "Start the original patcher"
+msgstr "Uruchom oryginalny patcher"
+
+msgid "The original patcher was started. It downloads the game data and continues after an interruption."
+msgstr "Oryginalny patcher został uruchomiony. Pobiera dane gry i wznawia pracę po przerwie."
+
+msgid "The original patcher is already running."
+msgstr "Oryginalny patcher jest już uruchomiony."
+
+msgid "The patcher fetches and completes the game data and continues after an interruption."
+msgstr "Patcher pobiera i uzupełnia dane gry oraz wznawia pracę po przerwie."
+
+msgid "The runner was downloaded, verified and unpacked."
+msgstr "Środowisko uruchomieniowe zostało pobrane, zweryfikowane i rozpakowane."
+
+msgid "There is no original patcher to start yet."
+msgstr "Nie ma jeszcze oryginalnego patchera do uruchomienia."
+
+msgid "Use a local installer …"
+msgstr "Użyj lokalnego instalatora …"
+
+msgid "Use an existing installation …"
+msgstr "Użyj istniejącej instalacji …"
+
+msgid "I agree to the downloads"
+msgstr "Zgadzam się na pobieranie"
+
+msgid "Original installer from Funcom, the Wine/Proton runtime (GE-Proton) from GitHub and Microsoft's Direct3D components, about 700 MB. Everything is verified by checksum; nothing is installed outside the installation folder."
+msgstr "Oryginalny instalator Funcom, środowisko Wine/Proton (GE-Proton) z GitHuba i składniki Direct3D firmy Microsoft, łącznie około 700 MB. Wszystko jest weryfikowane sumą kontrolną; nic nie jest instalowane poza folderem instalacji."
+
+msgid "The game is not installed yet. Agree to the downloads and press the button."
+msgstr "Gra nie jest jeszcze zainstalowana. Zaakceptuj pobieranie i naciśnij przycisk."
+
+msgid "The game is running. This window closes when you quit the game."
+msgstr "Gra jest uruchomiona. To okno zamknie się po wyjściu z gry."
+
+msgid "The game is running. If you exit the launcher now, the game ends too. Exit anyway?"
+msgstr "Gra jest uruchomiona. Jeśli teraz zamkniesz launcher, gra również się zakończy. Zamknąć mimo to?"
+
+msgid "Yes, end the game"
+msgstr "Tak, zakończ grę"
+
+msgid "FUNCOM IS WORKING …"
+msgstr "FUNCOM PRACUJE …"
+
+msgid "VERIFY INSTALLATION"
+msgstr "ZWERYFIKUJ INSTALACJĘ"
+
+msgid "The original patcher was started. This window notices by itself when it reports that nothing is left to fetch."
+msgstr "Oryginalny patcher został uruchomiony. To okno samo zauważy, gdy patcher zgłosi, że nie ma już nic do pobrania."
+
+msgid "The game data is not confirmed as complete yet. The original patcher checks it and repairs what is missing: start it with the button. Once it confirms that nothing is left to fetch, this window continues by itself and closes the patcher."
+msgstr "Kompletność danych gry nie została jeszcze potwierdzona. Oryginalny patcher je sprawdza i naprawia braki: uruchom go przyciskiem. Gdy potwierdzi, że nie ma już nic do pobrania, to okno samo kontynuuje i zamyka patcher."
+
+msgid "The original patcher confirmed that nothing is left to fetch and was closed."
+msgstr "Oryginalny patcher potwierdził, że nie ma już nic do pobrania, i został zamknięty."
+
+msgid "The original patcher confirmed that nothing is left to fetch but did not close. You can close its window yourself."
+msgstr "Oryginalny patcher potwierdził, że nie ma już nic do pobrania, ale się nie zamknął. Możesz zamknąć jego okno samodzielnie."
+
+msgid "The original patcher could not be asked to close ({0}). You can close its window yourself."
+msgstr "Nie udało się poprosić oryginalnego patchera o zamknięcie ({0}). Możesz zamknąć jego okno samodzielnie."
+
+msgid "The original Funcom program is working (download or check). When it shows “Play”, close its window: this window then checks the result by itself and continues."
+msgstr "Oryginalny program Funcom pracuje (pobieranie lub sprawdzanie). Gdy pokaże „Graj”, zamknij jego okno: to okno samo sprawdzi wynik i będzie kontynuować."
+
+msgid "DISPLAY"
+msgstr "EKRAN"
+
+msgid "Game resolution"
+msgstr "Rozdzielczość gry"
+
+msgid "Managed by the game (default)"
+msgstr "Zarządzana przez grę (domyślnie)"
+
+msgid "A selected resolution applies only to the game in a private Wine desktop. The desktop resolution stays unchanged."
+msgstr "Wybrana rozdzielczość dotyczy tylko gry w prywatnym pulpicie Wine. Rozdzielczość pulpitu pozostaje bez zmian."
+
+msgid "The saved resolution is unavailable. Select an available mode or Managed by the game before playing."
+msgstr "Zapisana rozdzielczość jest niedostępna. Przed grą wybierz dostępny tryb lub „Zarządzana przez grę”."
+
+msgid "Legacy display overrides are active. Select Managed by the game to leave resolution to the game."
+msgstr "Aktywne są starsze nadpisania ekranu. Wybierz „Zarządzana przez grę”, aby pozostawić rozdzielczość grze."
+
+msgid "Experimental v7 profile: folder with four checked 32-bit DLLs (including compiler 47)"
+msgstr "Eksperymentalny profil v7: folder z czterema sprawdzonymi 32-bitowymi bibliotekami DLL (w tym kompilatorem 47)"
+
+msgid "Normal installation uses the Microsoft 2010 profile automatically. This manual v7 profile is experimental and needs your own compiler 47; it is not downloaded. Files are checked and replaced files backed up."
+msgstr "Zwykła instalacja automatycznie używa profilu Microsoft 2010. Ten ręczny profil v7 jest eksperymentalny i wymaga własnego kompilatora 47; nie jest pobierany. Pliki są sprawdzane, a zastępowane pliki mają kopię zapasową."
+
+msgid "I accept the Microsoft SDK/runtime terms for local component installation"
+msgstr "Akceptuję warunki Microsoft SDK/runtime dla lokalnej instalacji składników"
+
+msgid "SDK terms (online copy)"
+msgstr "Warunki SDK (kopia online)"
+
+msgid "Runtime terms (Microsoft section)"
+msgstr "Warunki runtime (sekcja Microsoft)"
+
+msgid "Read the linked Microsoft terms before accepting. The links are online copies; the runtime page also contains unrelated product terms. Both consents are required before installing."
+msgstr "Przeczytaj powiązane warunki Microsoft przed ich akceptacją. Odnośniki prowadzą do kopii online; strona runtime zawiera także warunki innych produktów. Przed instalacją wymagane są obie zgody."
+
+msgid "Could not open the licence link: {0}"
+msgstr "Nie udało się otworzyć odnośnika do licencji: {0}"
+
+msgid "Only the original installer from Funcom (about 33 MB) is downloaded, from the official address, and verified by checksum. The launcher downloads no Microsoft software on Windows."
+msgstr "Pobierany jest tylko oryginalny instalator Funcom (około 33 MB), z oficjalnego adresu, i weryfikowany sumą kontrolną. Launcher nie pobiera żadnego oprogramowania Microsoft w systemie Windows."
+
+msgid "A selected resolution is written to the game's own settings and applies at the next start. Windows runs the game natively: there is no frame-rate limit or counter from the launcher."
+msgstr "Wybrana rozdzielczość jest zapisywana w ustawieniach samej gry i obowiązuje od następnego uruchomienia. Windows uruchamia grę natywnie: launcher nie oferuje limitu klatek ani licznika."
+
+msgid "The installer is in the cache and its checksum matches."
+msgstr "Instalator jest w pamięci podręcznej, a jego suma kontrolna się zgadza."
+
+msgid "The installer is in the cache."
+msgstr "Instalator jest w pamięci podręcznej."
+
+msgid "Please use the suggested default settings while installing The Secret World and do not change the installation path in particular. Windows may ask for your permission to start the installer."
+msgstr "Podczas instalacji The Secret World użyj sugerowanych ustawień domyślnych i przede wszystkim nie zmieniaj ścieżki instalacji. Windows może poprosić o zgodę na uruchomienie instalatora."
+
+msgid "The game client {0} was not found"
+msgstr "Nie znaleziono klienta gry {0}"
+
+msgid "Choose the installation again or reinstall the game."
+msgstr "Wybierz instalację ponownie lub zainstaluj grę od nowa."
+
+msgid "These Direct3D libraries are missing on this computer: {0}"
+msgstr "Na tym komputerze brakuje tych bibliotek Direct3D: {0}"
+
+msgid "They belong to Microsoft's DirectX End-User Runtimes (June 2010). Install that package from Microsoft's website yourself; the launcher does not download Microsoft software on Windows."
+msgstr "Należą one do pakietu Microsoft DirectX End-User Runtimes (czerwiec 2010). Zainstaluj ten pakiet samodzielnie ze strony Microsoft; launcher nie pobiera oprogramowania Microsoft w systemie Windows."
+
+msgid "the Direct3D libraries of the DirectX June 2010 runtime are present"
+msgstr "biblioteki Direct3D ze środowiska DirectX z czerwca 2010 są obecne"
+
+msgid "install Microsoft's DirectX End-User Runtimes (June 2010) yourself"
+msgstr "zainstaluj samodzielnie pakiet Microsoft DirectX End-User Runtimes (czerwiec 2010)"
+
+msgid "Set up The Secret World"
+msgstr "Skonfiguruj The Secret World"
+
+msgid "Choose how the game gets onto this computer. An existing installation is never changed."
+msgstr "Wybierz, w jaki sposób gra trafi na ten komputer. Istniejąca instalacja nigdy nie jest zmieniana."
+
+msgid "Download installer and go"
+msgstr "Pobierz instalator i kontynuuj"
+
+msgid "The official Funcom installer is downloaded, checked and started."
+msgstr "Oficjalny instalator Funcom jest pobierany, sprawdzany i uruchamiany."
+
+msgid "Provide the installer from disk"
+msgstr "Wskaż instalator z dysku"
+
+msgid "Select an original Funcom installer file you already have."
+msgstr "Wybierz oryginalny plik instalatora Funcom, który już masz."
+
+msgid "Use an existing TSW installation"
+msgstr "Użyj istniejącej instalacji TSW"
+
+msgid "Select the folder of a game installation that already exists."
+msgstr "Wybierz folder istniejącej instalacji gry."
+
+msgid "Game folder"
+msgstr "Folder gry"
+
+msgid "Not installed."
+msgstr "Nie zainstalowano."
+
+msgid "Installation found, but incomplete: the original patcher still has to fetch the game data."
+msgstr "Znaleziono instalację, ale niekompletną: oryginalny patcher musi jeszcze pobrać dane gry."
+
+msgid "Installation found, but not confirmed complete. The original patcher has to check it."
+msgstr "Znaleziono instalację, ale nie potwierdzono jej kompletności. Oryginalny patcher musi ją sprawdzić."
+
+msgid "Several installations were found. Choose the one to use:"
+msgstr "Znaleziono kilka instalacji. Wybierz tę, której chcesz użyć:"
+
+msgid "These Direct3D libraries of Microsoft's DirectX End-User Runtimes (June 2010) are missing on this computer: {0}. The original game needs them in their 32-bit form; without them it may not start or may show errors."
+msgstr "Na tym komputerze brakuje tych bibliotek Direct3D z pakietu Microsoft DirectX End-User Runtimes (czerwiec 2010): {0}. Oryginalna gra potrzebuje ich w wersji 32-bitowej; bez nich może się nie uruchomić lub wyświetlać błędy."
+
+msgid "The button downloads Microsoft's own installer from download.microsoft.com, checks its Microsoft signature and starts it. Microsoft's installer shows its own terms; Windows may ask for permission. Nothing is installed without your click."
+msgstr "Przycisk pobiera własny instalator Microsoft z download.microsoft.com, sprawdza jego podpis Microsoft i go uruchamia. Instalator Microsoft pokazuje własne warunki; Windows może poprosić o zgodę. Nic nie jest instalowane bez Twojego kliknięcia."
+
+msgid "Install DirectX components …"
+msgstr "Zainstaluj składniki DirectX …"
+
+msgid "Check again"
+msgstr "Sprawdź ponownie"
+
+msgid "curl was not found. Download Microsoft's DirectX installer yourself from {0}"
+msgstr "Nie znaleziono curl. Pobierz instalator DirectX firmy Microsoft samodzielnie z {0}"
+
+msgid "Microsoft's DirectX installer was downloaded and verified."
+msgstr "Instalator DirectX firmy Microsoft został pobrany i zweryfikowany."
+
+msgid "Microsoft's DirectX installer was started. Follow its steps (Windows may ask for permission), then click “Check again”."
+msgstr "Instalator DirectX firmy Microsoft został uruchomiony. Wykonaj jego kroki (Windows może poprosić o zgodę), a następnie kliknij „Sprawdź ponownie”."
+
+msgid "Microsoft's DirectX installer could not be prepared: {0}. It was not started. You can download it yourself from {1}"
+msgstr "Nie udało się przygotować instalatora DirectX firmy Microsoft: {0}. Nie został uruchomiony. Możesz pobrać go samodzielnie z {1}"
+
+msgid "All required DirectX libraries are present."
+msgstr "Wszystkie wymagane biblioteki DirectX są obecne."
+
+msgid "Still missing: {0}"
+msgstr "Nadal brakuje: {0}"
+
+msgid "TEST MODE: in the original installer choose a NEW, empty folder for the game - never an existing game folder. Windows may ask for your permission to start the installer."
+msgstr "TRYB TESTOWY: w oryginalnym instalatorze wybierz NOWY, pusty folder dla gry – nigdy istniejącego folderu gry. Windows może poprosić o zgodę na uruchomienie instalatora."
+
+msgid "The original installer is started with the folder {0} for the NEW copy. Check that it shows exactly this folder; if it shows another folder, or none, cancel it. Windows may ask for your permission to start the installer."
+msgstr "Oryginalny instalator jest uruchamiany z folderem {0} dla NOWEJ kopii. Sprawdź, czy pokazuje dokładnie ten folder; jeśli pokazuje inny lub żaden, anuluj. Windows może poprosić o zgodę na uruchomienie instalatora."
+
+msgid "Ignored existing installation: {0}"
+msgstr "Pominięta istniejąca instalacja: {0}"
+
+msgid "Install a new copy in another folder instead …"
+msgstr "Zamiast tego zainstaluj nową kopię w innym folderze …"
+
+msgid "Install a new copy in another folder …"
+msgstr "Zainstaluj nową kopię w innym folderze …"
+
+msgid "Use this when a game installation exists but you want a completely new one in another folder. The existing installation stays untouched and is ignored from then on; the original installer is started with the new folder."
+msgstr "Użyj tego, gdy istnieje instalacja gry, ale chcesz mieć zupełnie nową w innym folderze. Istniejąca instalacja pozostaje nietknięta i od tej chwili jest pomijana; oryginalny instalator jest uruchamiany z nowym folderem."
+
+msgid "Use the ignored installation again"
+msgstr "Użyj ponownie pominiętej instalacji"
+
+msgid "The file dialog is not available: {0}."
+msgstr "Okno wyboru plików jest niedostępne: {0}."
+
+msgid "This folder cannot be used for a new copy: {0}"
+msgstr "Tego folderu nie można użyć dla nowej kopii: {0}"
+
+msgid "The configuration could not be saved: {0}"
+msgstr "Nie udało się zapisać konfiguracji: {0}"
+
+msgid "The existing installation is now ignored by the launcher (nothing there was changed). The new copy goes into {0}. Choose how to install it below."
+msgstr "Istniejąca instalacja jest teraz pomijana przez launcher (nic w niej nie zmieniono). Nowa kopia trafi do {0}. Poniżej wybierz sposób instalacji."
+
+msgid "The ignored installation is visible to the launcher again."
+msgstr "Pominięta instalacja jest znowu widoczna dla launchera."
+
+msgid "A new version of the launcher is available."
+msgstr "Dostępna jest nowa wersja launchera."
+
+msgid "Close launcher"
+msgstr "Zamknij launcher"
+
+msgid "Flatpak found nothing to install. The update source may be unreachable, or the update was not allowed."
+msgstr "Flatpak nie znalazł niczego do zainstalowania. Źródło aktualizacji może być nieosiągalne lub aktualizacja nie została dozwolona."
+
+msgid "Flatpak installs it in the background. Your settings and the game stay as they are. Your system may ask you once to allow the update."
+msgstr "Flatpak instaluje ją w tle. Twoje ustawienia i gra pozostają bez zmian. System może jednorazowo poprosić o zgodę na aktualizację."
+
+msgid "Installing the launcher update … {0} %"
+msgstr "Instalowanie aktualizacji launchera … {0} %"
+
+msgid "Later"
+msgstr "Później"
+
+msgid "The launcher update is installed. Close the launcher and start it again to use the new version."
+msgstr "Aktualizacja launchera została zainstalowana. Zamknij launcher i uruchom go ponownie, aby używać nowej wersji."
+
+msgid "The update could not be installed: {0}"
+msgstr "Nie udało się zainstalować aktualizacji: {0}"
+
+msgid "The update source could not be reached. The launcher works as before; try again later."
+msgstr "Źródło aktualizacji jest nieosiągalne. Launcher działa jak dotąd; spróbuj ponownie później."
+
+msgid "The update was not allowed. Allow it when your system asks, or update another way."
+msgstr "Aktualizacja nie została dozwolona. Zezwól na nią, gdy system o to zapyta, lub zaktualizuj w inny sposób."
+
+msgid "This is a system-wide installation, so updating may ask for your administrator password. Use your software center or run: flatpak update {0}"
+msgstr "To instalacja ogólnosystemowa, więc aktualizacja może wymagać hasła administratora. Użyj centrum oprogramowania lub uruchom: flatpak update {0}"
+
+msgid "Try again"
+msgstr "Spróbuj ponownie"
+
+msgid "Update launcher"
+msgstr "Zaktualizuj launcher"
+
+msgid "You can also update with your software center, or run: flatpak update {0}"
+msgstr "Możesz też zaktualizować w centrum oprogramowania lub uruchomić: flatpak update {0}"
+
+msgid "It is downloaded and checked first. Then Windows asks for your permission once, and the launcher starts again by itself. Your settings and the game stay as they are."
+msgstr "Najpierw jest pobierana i sprawdzana. Następnie Windows jednorazowo prosi o zgodę, a launcher uruchamia się ponownie samodzielnie. Twoje ustawienia i gra pozostają bez zmian."
+
+msgid "Downloading the launcher update …"
+msgstr "Pobieranie aktualizacji launchera …"
+
+msgid "Checking the downloaded update …"
+msgstr "Sprawdzanie pobranej aktualizacji …"
+
+msgid "Installing the update. Allow the Windows dialog; the launcher closes and starts again by itself."
+msgstr "Instalowanie aktualizacji. Zezwól w oknie dialogowym systemu Windows; launcher zamknie się i uruchomi ponownie samodzielnie."
+
+msgid "The update could not be downloaded. The launcher works as before; try again later."
+msgstr "Nie udało się pobrać aktualizacji. Launcher działa jak dotąd; spróbuj ponownie później."
+
+msgid "The downloaded update did not match its signed checksum and was deleted. Nothing was installed."
+msgstr "Pobrana aktualizacja nie zgadzała się z podpisaną sumą kontrolną i została usunięta. Nic nie zainstalowano."
+
+msgid "Try again later; if it keeps failing, download the installer from the release page and check it there."
+msgstr "Spróbuj ponownie później; jeśli problem się powtarza, pobierz instalator ze strony wydania i sprawdź go tam."
+
+msgid "The update could not be prepared: {0}"
+msgstr "Nie udało się przygotować aktualizacji: {0}"
+
+msgid "The installation was cancelled. If you declined Windows' permission dialog, nothing was changed."
+msgstr "Instalacja została anulowana. Jeśli odrzucono okno zgody systemu Windows, nic nie zmieniono."
+
+msgid "The installer could not be started: {0}"
+msgstr "Nie udało się uruchomić instalatora: {0}"
+
+msgid "The launcher works as before. Try again later, or download the installer from the release page."
+msgstr "Launcher działa jak dotąd. Spróbuj ponownie później lub pobierz instalator ze strony wydania."
+
+msgid "The installer stopped with the error code {0}. The launcher may not have been updated."
+msgstr "Instalator zatrzymał się z kodem błędu {0}. Launcher mógł nie zostać zaktualizowany."
+
+msgid "The launcher works as before. Try again, or restore the previous version."
+msgstr "Launcher działa jak dotąd. Spróbuj ponownie lub przywróć poprzednią wersję."
+
+msgid "The result of the installer could not be read: {0}"
+msgstr "Nie udało się odczytać wyniku instalatora: {0}"
+
+msgid "Press the button to try again and allow the Windows dialog."
+msgstr "Naciśnij przycisk, aby spróbować ponownie, i zezwól w oknie dialogowym systemu Windows."
+
+msgid "Restore previous version"
+msgstr "Przywróć poprzednią wersję"
+
+msgid "A new version of TSW-Forever ({0}) is available."
+msgstr "Dostępna jest nowa wersja TSW-Forever ({0})."
+
+msgid "Open download page"
+msgstr "Otwórz stronę pobierania"
+
+msgid "The release page could not be opened. Open {0} in your browser."
+msgstr "Nie udało się otworzyć strony wydania. Otwórz {0} w przeglądarce."
+
+msgid "TSW-Forever {0}"
+msgstr "TSW-Forever {0}"

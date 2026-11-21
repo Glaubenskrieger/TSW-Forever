@@ -5,9 +5,24 @@
   <project_license>GPL-3.0-only</project_license>
   <name>The Secret World – Forever</name>
   <summary>TSW-Forever launcher for the original The Secret World client</summary>
+  <summary xml:lang="de">TSW-Forever-Launcher für den originalen The-Secret-World-Client</summary>
+  <summary xml:lang="fr">Launcher TSW-Forever pour le client original de The Secret World</summary>
+  <summary xml:lang="es">Launcher TSW-Forever para el cliente original de The Secret World</summary>
+  <summary xml:lang="pt_BR">Launcher do TSW-Forever para o cliente original de The Secret World</summary>
+  <summary xml:lang="pl">Launcher TSW-Forever dla oryginalnego klienta The Secret World</summary>
   <description>
     <p>A native launcher that starts the original The Secret World (2012) client through Wine or Proton, with optional FSR upscaling through gamescope and a guided installation.</p>
+    <p xml:lang="de">Ein nativer Launcher, der den originalen Client von The Secret World (2012) über Wine oder Proton startet, mit optionaler FSR-Hochskalierung über gamescope und einer geführten Installation.</p>
+    <p xml:lang="fr">Un launcher natif qui lance le client original de The Secret World (2012) via Wine ou Proton, avec une mise à l’échelle FSR facultative via gamescope et une installation guidée.</p>
+    <p xml:lang="es">Un launcher nativo que inicia el cliente original de The Secret World (2012) mediante Wine o Proton, con escalado FSR opcional a través de gamescope y una instalación guiada.</p>
+    <p xml:lang="pt_BR">Um launcher nativo que inicia o cliente original de The Secret World (2012) por meio do Wine ou do Proton, com escalonamento FSR opcional via gamescope e uma instalação guiada.</p>
+    <p xml:lang="pl">Natywny launcher, który uruchamia oryginalnego klienta The Secret World (2012) przez Wine lub Proton, z opcjonalnym skalowaniem FSR przez gamescope i prowadzoną instalacją.</p>
     <p>The launcher contains no game data. The original installer is downloaded only after your explicit consent and only if its checksum is known; you can also use an installer you obtained yourself or an existing installation.</p>
+    <p xml:lang="de">Der Launcher enthält keine Spieldaten. Der originale Installer wird nur nach Ihrer ausdrücklichen Zustimmung heruntergeladen und nur, wenn seine Prüfsumme bekannt ist; Sie können auch einen selbst beschafften Installer oder eine vorhandene Installation verwenden.</p>
+    <p xml:lang="fr">Le launcher ne contient aucune donnée du jeu. L’installateur d’origine n’est téléchargé qu’avec votre consentement explicite et seulement si sa somme de contrôle est connue ; vous pouvez aussi utiliser un installateur que vous vous êtes procuré ou une installation existante.</p>
+    <p xml:lang="es">El launcher no contiene datos del juego. El instalador original solo se descarga con tu consentimiento explícito y únicamente si se conoce su suma de comprobación; también puedes usar un instalador que hayas obtenido por tu cuenta o una instalación existente.</p>
+    <p xml:lang="pt_BR">O launcher não contém dados do jogo. O instalador original só é baixado com o seu consentimento explícito e somente se sua soma de verificação for conhecida; você também pode usar um instalador que tenha obtido por conta própria ou uma instalação existente.</p>
+    <p xml:lang="pl">Launcher nie zawiera danych gry. Oryginalny instalator jest pobierany wyłącznie za Twoją wyraźną zgodą i tylko wtedy, gdy znana jest jego suma kontrolna; możesz też użyć instalatora pozyskanego samodzielnie albo istniejącej instalacji.</p>
   </description>
   <url type="homepage">https://github.com/Glaubenskrieger/TSW-Forever</url>
   <url type="bugtracker">https://github.com/Glaubenskrieger/TSW-Forever/issues</url>
@@ -23,6 +38,6 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.3.0" date="2026-11-05" type="stable" />
+    <release version="0.4.0" date="2026-11-18" type="stable" />
   </releases>
 </component>

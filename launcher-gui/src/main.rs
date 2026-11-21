@@ -8,6 +8,8 @@
 // Windows: a normal GUI program without a console window (the command-line tool `tsw-launch.exe` keeps its console; diagnostics go to log files).
 #![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
+#[cfg(target_os = "linux")]
+mod flatpak_update;
 mod i18n;
 mod messages;
 mod model;
@@ -15,6 +17,8 @@ mod portal;
 mod theme;
 #[cfg(test)]
 mod ui_tests;
+#[cfg(feature = "windows-self-update")]
+mod win_update;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -95,6 +99,8 @@ struct State {
     funcom_children: Vec<std::process::Child>,
     /// The original patcher THIS window started (only that one may be asked to close, and only after Funcom confirmed the installation).
     patcher_child: Option<std::process::Child>,
+    /// The original patcher the button "Start the original patcher" started: at most one at a time (see [`start_patcher_once`]); kept so that it is collected when it ends.
+    button_patcher: Option<std::process::Child>,
     /// Closing was already tried for the current patcher run (one attempt per run).
     close_attempted: bool,
     /// What was seen of the current (or last) run of the original patcher, whoever started it.
@@ -102,6 +108,44 @@ struct State {
     run_active: bool,
     /// The last run ended after the patcher announced that it is done and wrote nothing big any more (see `install::RunWatch`).
     run_ok: bool,
+    /// The launcher update (Flatpak): what the window shows and the portal handle.
+    update: UpdateState,
+}
+
+/// The launcher update through the Flatpak update portal. Offline or without a portal nothing here ever shows.
+#[derive(Default)]
+struct UpdateState {
+    phase: tsw_launch::update::flatpak::Phase,
+    scope: Option<tsw_launch::update::flatpak::Scope>,
+    /// "Later" was pressed: the offer is hidden until the next start.
+    dismissed: bool,
+    #[cfg(target_os = "linux")]
+    handle: Option<flatpak_update::Handle>,
+    /// Windows: a newer stable version exists (a notice only: the user installs it by hand from the official release page; see `tsw_launch::releasenotice`).
+    notice: Option<tsw_launch::releasenotice::Notice>,
+    /// Windows, development feature only: the launcher update through the signed installer (see `tsw_launch::update::windows`).
+    #[cfg(feature = "windows-self-update")]
+    win: tsw_launch::update::windows::Phase,
+    #[cfg(feature = "windows-self-update")]
+    win_offer: Option<tsw_launch::update::Offer>,
+    #[cfg(feature = "windows-self-update")]
+    win_dismissed: bool,
+    #[cfg(feature = "windows-self-update")]
+    win_services: Option<WinServices>,
+    /// Windows: the signed installer PROCESS exists (from a successful start until its end). While it runs the window MUST accept a close request: Inno Setup closes the
+    /// running launcher (`/CLOSEAPPLICATIONS`) to replace its files and waits for that; a launcher that asks "really quit?" instead would block the update (a deadlock).
+    /// It is set only by [`run_update`] after the process was started and cleared by it on EVERY way out (also a panic), then again by `windows_update_finished`.
+    #[cfg(feature = "windows-self-update")]
+    win_installer_active: Arc<AtomicBool>,
+}
+
+/// What the Windows update needs from the system: the downloader, the installer starter and the folder for the downloads. Real ones on Windows; the tests give fakes.
+#[cfg(feature = "windows-self-update")]
+#[derive(Clone)]
+struct WinServices {
+    download: Arc<dyn tsw_launch::update::windows::Download + Send + Sync>,
+    starter: Arc<dyn tsw_launch::update::windows::Starter + Send + Sync>,
+    updates_dir: PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -188,6 +232,20 @@ fn render(ui: &MainWindow, st: &State) {
         None => ui.set_status_text(SharedString::new()),
     }
     ui.set_message(sstr(st.view.message.as_ref().map(|m| cat.render(m)).unwrap_or_default()));
+    let banner = model::update_banner(&st.update.phase, st.update.scope, st.update.dismissed);
+    #[cfg(feature = "windows-self-update")]
+    let banner = banner.or_else(|| model::windows_update_banner(&st.update.win, st.update.win_offer.as_ref().is_some_and(|o| o.previous.is_some()), st.update.win_dismissed));
+    let banner = banner.or_else(|| model::release_notice_banner(st.update.notice.as_ref()));
+    match banner {
+        Some(b) => {
+            ui.set_update_secondary(sstr(b.secondary.as_ref().map(|d| cat.render(d)).unwrap_or_default()));
+            ui.set_update_state(b.state);
+            ui.set_update_text(sstr(cat.render(&b.text)));
+            ui.set_update_detail(sstr(b.detail.as_ref().map(|d| cat.render(d)).unwrap_or_default()));
+            ui.set_update_button(sstr(cat.render(&b.button)));
+        }
+        None => ui.set_update_state(0),
+    }
     let rows: Vec<StatusRow> = st.view.rows.iter().map(|r| StatusRow { level: r.kind.level(), text: sstr(cat.render(&r.text)), hint: sstr(cat.render(&r.hint)) }).collect();
     ui.set_rows(ModelRc::new(VecModel::from(rows)));
     match &st.view.progress {
@@ -232,7 +290,6 @@ fn render(ui: &MainWindow, st: &State) {
     }
     ui.set_detected_installs(slint::ModelRc::new(slint::VecModel::from(listed)));
     ui.set_install_hint(sstr(st.view.install_hint.as_ref().map(|m| cat.render(m)).unwrap_or_default()));
-    ui.set_patch_status(sstr(cat.render(&model::patch_notice())));
     ui.set_version_info(sstr(cat.render(&model::version_info())));
     ui.set_cache_status(sstr(cache_status_text(st)));
     ui.set_profile_status(sstr(profile_status_text(st)));
@@ -267,6 +324,116 @@ fn post(weak: &slint::Weak<MainWindow>, state: &Shared, f: impl FnOnce(&MainWind
         let mut st = state.lock().unwrap();
         f(&ui, &mut st);
         render(&ui, &st);
+    });
+}
+
+/// Ask the portal to install the update. `false` = there is no portal handle (the monitor could not be started, or this is not a Flatpak).
+#[cfg(target_os = "linux")]
+fn request_launcher_update(weak: &slint::Weak<MainWindow>, state: &Shared, st: &State) -> bool {
+    let Some(h) = st.update.handle.clone() else { return false };
+    let (weak, state) = (weak.clone(), state.clone());
+    h.request_update(move |e| update_event(&weak, &state, e));
+    true
+}
+
+/// Without Flatpak (Windows, other systems) there is no launcher update through the portal.
+#[cfg(not(target_os = "linux"))]
+fn request_launcher_update(_weak: &slint::Weak<MainWindow>, _state: &Shared, _st: &State) -> bool {
+    false
+}
+
+/// Windows: ask the official release page once at start whether a newer stable version exists and show a quiet notice if so. Only a notice: nothing is downloaded,
+/// installed or run, nothing needs administrator rights, and offline or any unexpected answer leaves the window as it was (see `tsw_launch::releasenotice`).
+#[cfg(windows)]
+fn start_release_notice_check(ui: &MainWindow, state: &Shared) {
+    if tsw_launch::channel::build() != tsw_launch::channel::Channel::Stable {
+        return;
+    }
+    let curl = doctor::find_program(Path::new("curl"), std::env::var_os("PATH").as_deref()).unwrap_or_else(|| PathBuf::from("curl"));
+    let (weak, state) = (ui.as_weak(), state.clone());
+    std::thread::spawn(move || {
+        let fetch = tsw_launch::releasenotice::CurlHead { curl };
+        if let Some(notice) = tsw_launch::releasenotice::check(&fetch, tsw_launch::channel::build(), tsw_launch::project::REPO_URL, tsw_launch::project::APP_VERSION) {
+            post(&weak, &state, move |_, st| st.update.notice = Some(notice));
+        }
+    });
+}
+
+/// Open the official release page of a notice in the default browser. Only an address under `<repo>/releases/tag/v` is ever opened (defence in depth: the notice already
+/// carries an address built from that prefix). Nothing is downloaded or run by the launcher.
+fn open_release_page(url: &str) -> bool {
+    if !url.starts_with(&format!("{}/releases/tag/v", tsw_launch::project::REPO_URL)) || url.chars().any(|c| !(c.is_ascii_alphanumeric() || matches!(c, ':' | '/' | '.' | '-'))) {
+        return false;
+    }
+    #[cfg(all(windows, not(test)))]
+    {
+        let mut cmd = std::process::Command::new("explorer.exe");
+        cmd.arg(url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        tsw_launch::winnative::no_window(&mut cmd);
+        // explorer reports exit code 1 even when it has opened the page, so only a failure to start counts
+        cmd.spawn().is_ok()
+    }
+    // tests never start a browser; they only record the address; systems other than Windows show no notice at all
+    #[cfg(test)]
+    {
+        OPENED_PAGES.lock().unwrap().push(url.to_string());
+        true
+    }
+    #[cfg(all(not(windows), not(test)))]
+    {
+        false
+    }
+}
+
+/// Test double of the browser: the addresses `open_release_page` was asked to open.
+#[cfg(test)]
+static OPENED_PAGES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// A signal of the Flatpak update portal, on the UI thread.
+#[cfg(target_os = "linux")]
+fn update_event(weak: &slint::Weak<MainWindow>, state: &Shared, e: tsw_launch::update::flatpak::Event) {
+    post(weak, state, move |_, st| {
+        st.update.phase = tsw_launch::update::flatpak::reduce(&st.update.phase, &e);
+        // an offer the user did not wait for is shown again only when something new happens
+        if matches!(e, tsw_launch::update::flatpak::Event::Progress { .. }) {
+            st.update.dismissed = false;
+        }
+    });
+}
+
+/// Start the launcher update check where it applies (see `tsw_launch::update::flatpak::eligibility`). Everything happens on a worker thread; a failure
+/// of any kind leaves the window as it was.
+#[cfg(target_os = "linux")]
+fn start_launcher_update(ui: &MainWindow, state: &Shared) {
+    use tsw_launch::update::flatpak::{eligibility, Eligibility};
+    let info = std::fs::read_to_string("/.flatpak-info").ok();
+    let scope = match eligibility(info.as_deref(), tsw_launch::channel::build(), tsw_launch::channel::APP_ID) {
+        Eligibility::Eligible(scope) => scope,
+        // not a Flatpak, no update source, or an installation that does not fit this build: no update offer
+        _ => return,
+    };
+    let (weak, state) = (ui.as_weak(), state.clone());
+    std::thread::spawn(move || {
+        let (weak2, state2) = (weak.clone(), state.clone());
+        match flatpak_update::start(None, move |e| update_event(&weak2, &state2, e)) {
+            Ok(handle) => post(&weak, &state, move |_, st| {
+                st.update.scope = Some(scope);
+                st.update.handle = Some(handle);
+            }),
+            // no update portal (an old Flatpak): the former plain hint, from the repository's published commit
+            Err(_) => {
+                let curl = doctor::find_program(Path::new("curl"), std::env::var_os("PATH").as_deref()).unwrap_or_else(|| PathBuf::from("curl"));
+                let status = tsw_launch::selfupdate::check(Path::new("/.flatpak-info"), &curl, tsw_launch::project::FLATPAK_REPO_URL, &tsw_launch::project::flatpak_ref_for("stable"));
+                if matches!(status, tsw_launch::selfupdate::Status::Available { .. }) {
+                    post(&weak, &state, |_, st| {
+                        st.view.message = Some(Msg::new(
+                            "A launcher update is available. Install it with your system\'s software center, or run: flatpak update {0}. Then restart the launcher.",
+                            [tsw_launch::project::APP_ID.to_string()],
+                        ))
+                    });
+                }
+            }
+        }
     });
 }
 
@@ -541,6 +708,64 @@ fn fit_window(ui: &MainWindow) {
     ui.set_win_height(h);
 }
 
+/// Linux only. With `SLINT_SCALE_FACTOR` set, Slint 1.18 (winit backend) creates the fixed window with correctly scaled limits and then applies the limits a second time
+/// while its own scale factor is still 1.0, so the compositor ends up with min = max = 1000x660 for a window that really is 1500x990 (at 1.5). Slint never corrects this,
+/// because it compares the limits in logical pixels and those do not change. Slint's stable API has no way to set the limits, so the launcher sets them once more on the
+/// winit window, to the physical size of the window (model::physical_window_limits). Without the override nothing is touched, so a normal start, including every
+/// compositor scale (KDE at 150 %, for instance), runs exactly as before. The size stays fixed: minimum and maximum are the same number.
+/// Returns whether the limits were set: the winit window exists only once the event loop runs, so this is retried by `keep_window_limits_pinned`.
+#[cfg(target_os = "linux")]
+fn pin_window_limits_for_scale_override(ui: &MainWindow) -> bool {
+    use slint::winit_030::{winit, WinitWindowAccessor};
+    let Some(scale) = model::scale_override(std::env::var("SLINT_SCALE_FACTOR").ok().as_deref()) else { return false };
+    let Some((w, h)) = model::physical_window_limits((ui.get_win_width(), ui.get_win_height()), scale) else { return false };
+    ui.window()
+        .with_winit_window(|window| {
+            let size = winit::dpi::PhysicalSize::new(w, h);
+            window.set_min_inner_size(Some(size));
+            window.set_max_inner_size(Some(size));
+        })
+        .is_some()
+}
+
+/// Linux only: runs `pin_window_limits_for_scale_override` as soon as the window exists (a 100 ms timer, at most 5 s), and a few ticks more so that anything Slint
+/// applies right after window creation is overwritten by the same, correct numbers; then the timer stops. Returns `None` (no timer at all) unless the scale is overridden.
+#[cfg(target_os = "linux")]
+fn keep_window_limits_pinned(ui: &MainWindow) -> Option<std::rc::Rc<slint::Timer>> {
+    model::scale_override(std::env::var("SLINT_SCALE_FACTOR").ok().as_deref())?;
+    let timer = std::rc::Rc::new(slint::Timer::default());
+    let (weak, own, ticks, after_success) = (ui.as_weak(), std::rc::Rc::downgrade(&timer), std::cell::Cell::new(0u32), std::cell::Cell::new(0u32));
+    timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(100), move || {
+        ticks.set(ticks.get() + 1);
+        let done = match weak.upgrade() {
+            Some(ui) if pin_window_limits_for_scale_override(&ui) => {
+                after_success.set(after_success.get() + 1);
+                after_success.get() >= 5
+            }
+            Some(_) => false,
+            None => true,
+        };
+        if done || ticks.get() >= 50 {
+            if let Some(timer) = own.upgrade() {
+                timer.stop();
+            }
+        }
+    });
+    Some(timer)
+}
+
+/// TEST HOOK, Windows DEBUG builds only: one line per close request into the file named by TSW_LAUNCH_TEST_CLOSE_LOG (milliseconds since 1970, process id, decision), so that the
+/// Windows update spike can see WHEN and HOW OFTEN the window was asked to close. Nothing happens when the variable is not set.
+#[cfg(all(debug_assertions, windows, feature = "windows-self-update"))]
+fn test_close_log(decision: &str) {
+    use std::io::Write;
+    let Some(path) = std::env::var_os("TSW_LAUNCH_TEST_CLOSE_LOG") else { return };
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{ms} pid={} close requested: {decision}", std::process::id());
+    }
+}
+
 /// Leave the launcher without asking: after the user confirmed, or after the game was started successfully. Only the
 /// launcher window goes away; the game is a separate process and is not touched.
 fn leave(ui: &MainWindow, may_close: &AtomicBool) {
@@ -614,14 +839,102 @@ fn wire(ui: &MainWindow, state: &Shared, may_close: &Arc<AtomicBool>) {
     // automatic close after a successful start sets the flag; the started game is a separate process and is never touched.
     {
         let (weak, may_close) = (ui.as_weak(), may_close.clone());
+        // (development feature only) a running update installer asks the launcher to close (Inno Setup, `/CLOSEAPPLICATIONS`): that request is accepted at once, without asking
+        #[cfg(feature = "windows-self-update")]
+        let installer_active = state.lock().unwrap().update.win_installer_active.clone();
+        // TEST HOOK, compiled into Windows DEBUG builds only (a release build and every Linux build do not contain it): the Windows update spike (scripts/windows-update-spike) starts a debug build of this
+        // window with TSW_LAUNCH_TEST_ACCEPT_CLOSE=1 to find out how Inno Setup's Restart Manager closes the real window. It makes the window accept close requests as it does while
+        // an update installer runs. It cannot affect an installed (release) launcher.
+        #[cfg(all(debug_assertions, windows, feature = "windows-self-update"))]
+        let test_accept_close = std::env::var_os("TSW_LAUNCH_TEST_ACCEPT_CLOSE").is_some_and(|v| v == "1");
+        #[cfg(not(all(debug_assertions, windows, feature = "windows-self-update")))]
+        let test_accept_close = false;
         ui.window().on_close_requested(move || {
-            if may_close.load(Ordering::SeqCst) {
+            let accept = may_close.load(Ordering::SeqCst) || test_accept_close;
+            // Windows: the installer (manual update) is replacing the program files and asks this window to close: no question, nothing is lost
+            #[cfg(windows)]
+            let accept = accept || tsw_launch::winnative::data_dir(&tsw_launch::winnative::real_env).is_some_and(|d| tsw_launch::winnative::installer_wants_close(&d, std::time::SystemTime::now()));
+            #[cfg(feature = "windows-self-update")]
+            let accept = accept || installer_active.load(Ordering::SeqCst);
+            #[cfg(all(debug_assertions, windows, feature = "windows-self-update"))]
+            test_close_log(if accept { "accepted" } else { "refused (the window asks first)" });
+            if accept {
                 return CloseRequestResponse::HideWindow;
             }
             if let Some(ui) = weak.upgrade() {
                 ui.set_confirm_exit(true);
             }
             CloseRequestResponse::KeepWindowShown
+        });
+    }
+    {
+        // the user's decision to install the launcher update (or, after it was installed, to close the launcher so that the new version starts next time)
+        let (weak, may_close, state) = (ui.as_weak(), may_close.clone(), state.clone());
+        ui.on_update_action(move || {
+            use tsw_launch::update::flatpak::{reduce, Event, Phase};
+            let Some(ui) = weak.upgrade() else { return };
+            let mut st = state.lock().unwrap();
+            if st.update.phase == Phase::RestartNeeded {
+                st.install_cancel.store(true, Ordering::SeqCst);
+                drop(st);
+                leave(&ui, &may_close);
+                return;
+            }
+            if st.update.phase == Phase::Idle {
+                // the Flatpak phase is idle on Windows (and everywhere the portal is not used)
+                #[cfg(feature = "windows-self-update")]
+                if let Some(installer) = st.update.win_offer.as_ref().map(|o| o.installer.clone()) {
+                    if matches!(st.update.win, tsw_launch::update::windows::Phase::Available | tsw_launch::update::windows::Phase::Failed(_)) {
+                        win_update::start_windows_update(&weak, &state, &may_close, &mut st, installer);
+                        render(&ui, &st);
+                    }
+                    return;
+                }
+                // Windows: the notice that a newer version exists. The button only opens the official release page; the user installs the new installer by hand.
+                if let Some(notice) = st.update.notice.clone() {
+                    if !open_release_page(&notice.url) {
+                        st.view.message = Some(Msg::new("The release page could not be opened. Open {0} in your browser.", [notice.url]));
+                        render(&ui, &st);
+                    }
+                    return;
+                }
+            }
+            st.update.phase = reduce(&st.update.phase, &Event::Requested);
+            st.update.dismissed = false;
+            if !request_launcher_update(&weak, &state, &st) {
+                // no update service (no portal handle, or not a Flatpak at all): the retry ends as a visible failure, never as an install that never finishes
+                st.update.phase = Phase::Failed(tsw_launch::update::flatpak::Failure::Other("the update service of Flatpak is not available".into()));
+            }
+            render(&ui, &st);
+        });
+    }
+    #[cfg(feature = "windows-self-update")]
+    {
+        // (development feature only) install the previous version again (signed in the same metadata), after a failed update
+        let (weak, may_close, state) = (ui.as_weak(), may_close.clone(), state.clone());
+        ui.on_update_secondary_action(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut st = state.lock().unwrap();
+            if !matches!(st.update.win, tsw_launch::update::windows::Phase::Failed(_)) {
+                return;
+            }
+            if let Some((_, previous)) = st.update.win_offer.as_ref().and_then(|o| o.previous.clone()) {
+                win_update::start_windows_update(&weak, &state, &may_close, &mut st, previous);
+                render(&ui, &st);
+            }
+        });
+    }
+    {
+        let (weak, state) = (ui.as_weak(), state.clone());
+        ui.on_update_dismiss(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut st = state.lock().unwrap();
+            st.update.dismissed = true;
+            #[cfg(feature = "windows-self-update")]
+            {
+                st.update.win_dismissed = true;
+            }
+            render(&ui, &st);
         });
     }
     {
@@ -940,7 +1253,15 @@ fn wire(ui: &MainWindow, state: &Shared, may_close: &Arc<AtomicBool>) {
             };
             let started = layout.and_then(|l| {
                 let patcher = install::patcher_to_run(&install::assess(&l, &st.install, None).stage).ok_or_else(|| Msg::plain("There is no original patcher to start yet."))?;
-                tsw_launch::launch::spawn_detached(&mut install::patcher_command(&l, &rt.wine, &patcher), None).map(|_| ()).map_err(|e| Msg::new("Installation step failed: {0}", [e.to_string()]))
+                // a patcher that is running already (started by this button, by the installation steps, or - on Windows, where `cmd start` returns at once - found by name) is not started a second time
+                let elsewhere =
+                    st.patcher_child.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))) || (cfg!(windows) && !tsw_launch::launch::find_processes(&[install::PATCHER_EXE], &l.base).is_empty());
+                let command = || tsw_launch::launch::spawn_detached_child(&mut install::patcher_command(&l, &rt.wine, &patcher), None);
+                match start_patcher_once(&mut st.button_patcher, elsewhere, command) {
+                    PatcherStart::Started => Ok(()),
+                    PatcherStart::AlreadyRunning => Err(Msg::plain("The original patcher is already running.")),
+                    PatcherStart::Failed(e) => Err(Msg::new("Installation step failed: {0}", [e.to_string()])),
+                }
             });
             match started {
                 Ok(()) => st.view.message = Some(Msg::plain("The original patcher was started. It downloads the game data and continues after an interruption.")),
@@ -1257,6 +1578,9 @@ fn watch_tick(ui: &MainWindow, state: &Shared) {
     let (layout, install_state) = {
         let mut st = state.lock().unwrap();
         st.funcom_children.retain_mut(|c| matches!(c.try_wait(), Ok(None)));
+        if st.button_patcher.as_mut().is_some_and(|c| !matches!(c.try_wait(), Ok(None))) {
+            st.button_patcher = None;
+        }
         if st.patcher_child.as_mut().is_some_and(|c| !matches!(c.try_wait(), Ok(None))) {
             st.patcher_child = None;
             st.close_attempted = false;
@@ -1379,6 +1703,30 @@ fn install_sink(weak: &slint::Weak<MainWindow>, state: &Shared, done: Msg) -> im
 /// the (empty) path.
 struct WineProgram {
     wine: PathBuf,
+}
+
+/// What [`start_patcher_once`] did.
+enum PatcherStart {
+    Started,
+    AlreadyRunning,
+    Failed(std::io::Error),
+}
+
+/// The one place that starts the original patcher for the button, with the rule "at most one at a time". `slot` holds the child of the previous start: it is looked at BEFORE anything
+/// is started (a running child, or `other_running`, refuses the start; a finished one is collected and the slot freed, so a new start is possible after a regular end). The caller holds
+/// the state lock across the whole call, so two callbacks in a row cannot both pass the check. A start that fails leaves the slot empty: a failure never blocks the next try.
+fn start_patcher_once(slot: &mut Option<std::process::Child>, other_running: bool, start: impl FnOnce() -> std::io::Result<std::process::Child>) -> PatcherStart {
+    if slot.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))) || other_running {
+        return PatcherStart::AlreadyRunning;
+    }
+    *slot = None;
+    match start() {
+        Ok(child) => {
+            *slot = Some(child);
+            PatcherStart::Started
+        }
+        Err(e) => PatcherStart::Failed(e),
+    }
 }
 
 fn wine_program() -> Option<WineProgram> {
@@ -1709,10 +2057,12 @@ fn main() -> Result<(), slint::PlatformError> {
         watch_busy: false,
         funcom_children: Vec::new(),
         patcher_child: None,
+        button_patcher: None,
         close_attempted: false,
         run: Default::default(),
         run_active: false,
         run_ok: false,
+        update: Default::default(),
     }));
     render(&ui, &state.lock().unwrap());
 
@@ -1727,34 +2077,21 @@ fn main() -> Result<(), slint::PlatformError> {
         refresh_install(&ui, &state, &mut st);
         render(&ui, &st);
     }
-    // Launcher update hint (Flatpak only, silent when offline or not published): the HOST's Flatpak does the actual, signed update.
-    if Path::new("/.flatpak-info").is_file() {
-        let (weak, state2) = (ui.as_weak(), state.clone());
-        std::thread::spawn(move || {
-            let curl = doctor::find_program(Path::new("curl"), std::env::var_os("PATH").as_deref()).unwrap_or_else(|| PathBuf::from("curl"));
-            // the channel is the Flatpak branch this launcher was installed from; a local build (any other branch) is not compared with the repository
-            let info = std::fs::read_to_string("/.flatpak-info").unwrap_or_default();
-            let channel = tsw_launch::selfupdate::branch(&info).unwrap_or_else(|| "stable".into());
-            let status = if tsw_launch::selfupdate::is_channel(&channel) {
-                tsw_launch::selfupdate::check(Path::new("/.flatpak-info"), &curl, tsw_launch::project::FLATPAK_REPO_URL, &tsw_launch::project::flatpak_ref_for(&channel))
-            } else {
-                tsw_launch::selfupdate::Status::Unknown("not an update channel".into())
-            };
-            if matches!(status, tsw_launch::selfupdate::Status::Available { .. }) {
-                post(&weak, &state2, |_, st| {
-                    st.view.message = Some(Msg::new(
-                        "A launcher update is available. Install it with your system\'s software center, or run: flatpak update {0}. Then restart the launcher.",
-                        [tsw_launch::project::APP_ID.to_string()],
-                    ))
-                });
-            }
-        });
-    }
+    // Launcher update (Flatpak only; silent when offline, without a portal or where the package has no update source): the HOST's Flatpak does the
+    // actual, signed update through the update portal, after the user agreed. A package without an update source (a local build, a testing package) shows nothing.
+    #[cfg(target_os = "linux")]
+    start_launcher_update(&ui, &state);
+    #[cfg(all(windows, feature = "windows-self-update"))]
+    win_update::start_windows_update_check(&ui, &state);
+    #[cfg(windows)]
+    start_release_notice_check(&ui, &state);
     let may_close = Arc::new(AtomicBool::new(false));
     ui.set_game_ends_with_launcher(tsw_launch::gamescope::in_flatpak(Path::new("/.flatpak-info"), std::env::var_os("FLATPAK_ID").as_deref()));
     wire(&ui, &state, &may_close);
     ui.show()?;
     fit_window(&ui);
+    #[cfg(target_os = "linux")]
+    let _limits_timer = keep_window_limits_pinned(&ui);
     set_resolution_modes(&ui, &state.lock().unwrap(), &[]);
     refresh_resolution_modes(&ui, &state);
     prepare_in_background(&ui, &state, false);
@@ -1854,5 +2191,81 @@ mod tests {
         assert_eq!(progress_detail(&p, &Catalog::new("de")), "63 % · 41,2 MB von 65,0 MB · 12,0 MB/s · noch 3 s");
         assert_eq!(progress_detail(&p, &Catalog::new("en")), "63% · 41.2 MB of 65.0 MB · 12.0 MB/s · 3 s left");
         assert_eq!(progress_detail(&Progress::indeterminate(Phase::Checking, "x"), &Catalog::new("de")), "", "nothing invented");
+    }
+
+    /// A harmless stand-in process: `sleep` for `seconds` (never the real patcher, never Wine).
+    #[cfg(unix)]
+    fn stand_in(seconds: &str) -> std::io::Result<std::process::Child> {
+        std::process::Command::new("/bin/sleep").arg(seconds).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()
+    }
+
+    #[cfg(unix)]
+    fn kill(slot: &mut Option<std::process::Child>) {
+        if let Some(mut c) = slot.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_patcher_button_starts_one_patcher_and_refuses_every_further_start_while_it_runs() {
+        let mut slot = None;
+        let starts = std::cell::Cell::new(0);
+        let start = || {
+            starts.set(starts.get() + 1);
+            stand_in("30")
+        };
+        assert!(matches!(start_patcher_once(&mut slot, false, start), PatcherStart::Started));
+        // callbacks in a row (the state lock is held across each call, so this is what a burst of clicks does): none of them starts anything
+        for _ in 0..200 {
+            assert!(matches!(start_patcher_once(&mut slot, false, start), PatcherStart::AlreadyRunning));
+        }
+        assert_eq!(starts.get(), 1, "the start function ran exactly once");
+        kill(&mut slot);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn after_a_regular_end_the_patcher_can_be_started_again() {
+        let mut slot = None;
+        assert!(matches!(start_patcher_once(&mut slot, false, || stand_in("0.05")), PatcherStart::Started));
+        let first = slot.as_ref().unwrap().id();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        // the stand-in ends by itself; the next request collects it and starts a new one
+        loop {
+            match start_patcher_once(&mut slot, false, || stand_in("30")) {
+                PatcherStart::Started => break,
+                PatcherStart::AlreadyRunning => {
+                    assert!(std::time::Instant::now() < deadline, "the first stand-in never ended");
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                PatcherStart::Failed(e) => panic!("{e}"),
+            }
+        }
+        assert_ne!(slot.as_ref().unwrap().id(), first, "a new process");
+        kill(&mut slot);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_start_does_not_block_the_next_try_and_a_running_patcher_of_another_path_refuses() {
+        let mut slot = None;
+        let failing = || std::process::Command::new("/nonexistent/tsw-no-such-program").spawn();
+        assert!(matches!(start_patcher_once(&mut slot, false, failing), PatcherStart::Failed(_)));
+        assert!(slot.is_none(), "a failure leaves nothing behind");
+        assert!(matches!(start_patcher_once(&mut slot, false, failing), PatcherStart::Failed(_)), "and the next try really tries");
+        // the installation steps (or, on Windows, a process found by name) have a patcher running: no start at all, the start function is not even called
+        let called = std::cell::Cell::new(false);
+        assert!(matches!(
+            start_patcher_once(&mut slot, true, || {
+                called.set(true);
+                stand_in("30")
+            }),
+            PatcherStart::AlreadyRunning
+        ));
+        assert!(!called.get() && slot.is_none());
+        assert!(matches!(start_patcher_once(&mut slot, false, || stand_in("30")), PatcherStart::Started));
+        kill(&mut slot);
     }
 }

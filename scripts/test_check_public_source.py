@@ -33,7 +33,7 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(self.audit(), [])
 
     def test_private_history_notes_branding_and_unapproved_scripts_are_refused(self):
-        for name in ['.git/config', 'reports/private.txt', 'assets/branding/image.png', 'documentation/project-status.md', 'scripts/private-helper.py', 'scripts/rogue.ps1', 'documentation/windows-development-progress.md', 'packaging/windows/setup.exe']:
+        for name in ['.git/config', 'reports/private.txt', 'assets/branding/image.png', 'documentation/project-status.md', 'scripts/private-helper.py', 'scripts/rogue.ps1', 'documentation/windows-development-progress.md', 'packaging/windows/setup.exe', 'packaging/channels/testing.conf', 'packaging/channels/testing-feed.conf']:
             self.assertTrue(self.audit((name, b'fixture')), name)
 
     def test_the_directory_entry_of_an_approved_root_file_is_accepted_but_other_root_directories_are_not(self):

@@ -1,6 +1,6 @@
 # Building TSW-Forever from source
 
-The official binary formats are the **Flatpak** on Linux and the **Windows installer** on Windows (see the README). This document describes the Linux build; building on Windows is described in `building-windows.md`. If you prefer to build the launcher yourself, use the **source archive** `tsw-forever-<version>-src.tar.gz` of a release (or a checkout of the Git repository). There are no distribution-specific packages (`.deb`, `.rpm`, Arch packages) and no AppImage. The build produces two programs: `tsw-launch` (command line) and `tsw-launcher` (graphical front end).
+The official binary format on Linux is the **Flatpak**. If you prefer to build the launcher yourself, use the **source archive** `tsw-forever-<version>-src.tar.gz` of a release (or a checkout of the Git repository). There are no distribution-specific packages (`.deb`, `.rpm`, Arch packages) and no AppImage. The build produces two programs: `tsw-launch` (command line) and `tsw-launcher` (graphical front end).
 
 ## 1. Check the archive
 ```sh

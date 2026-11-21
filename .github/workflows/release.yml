@@ -1,9 +1,22 @@
-# The ONE automated release process. A version tag v<MAJOR>.<MINOR>.<PATCH> pushed by the repository owner builds the complete release set from the tagged
-# commit (release-set.yml: Linux Flatpak + source archive, Windows installer, SHA256SUMS), verifies it and publishes exactly four files to a GitHub release:
-#   tsw-forever-<version>.flatpak, tsw-forever-<version>-src.tar.gz, tsw-forever-<version>-windows-setup.exe, SHA256SUMS.
-# The same file works unchanged in the private development repository and in the public repository: it contains no repository name, no secret and no
-# private path. Only the publish job has write permission (contents: write); the build jobs are read-only. A release is created as a DRAFT, its assets are
-# uploaded and downloaded again for comparison, and only then it is made public. An existing release is never replaced. Tags are never created by a workflow.
+# RELEASE ON TAG. A version tag v<MAJOR>.<MINOR>.<PATCH> pushed by the repository owner PUBLISHES the candidate that build.yml built, tested and checked when the commit was pushed
+# to main. Nothing is compiled here. No manual signing, no manual bundle replacement and no manual upload. Two human approvals (GitHub environments, enforced by GitHub, not by this
+# file) stand in the way of anything public: (1) `flatpak-release` before the signing key is released to the job `sign`, (2) `release-publish` before the draft release is published.
+#
+#   guard ........ the tag is the owner's, on main, matches APP_VERSION; the live channel state allows this version (no downgrade, no re-publish)
+#   candidate .... finds the successful build run of EXACTLY the tagged commit (build.yml), checks its artifacts (complete, not expired, SHA-256 against candidate.json) and hands them on
+#   sign ......... environment flatpak-release (approval 1): the signing SUBKEY of the project key from the environment secret signs commits and summary, static deltas follow,
+#                  the result is verified with the committed public key (scripts/flatpak_sign_ci.sh). Nothing is compiled or downloaded from third parties in this job.
+#   verify-signed  unprivileged re-check with the public key only, signed bundle (assembled from the signed repository, not compiled), bundle == repository, installation audit
+#   draft ........ the four release files (signed bundle, source archive, Windows installer, SHA256SUMS) go into a DRAFT release and are read back and compared
+#   pages-build .. web site + signed repository + install files, assembled in one folder (scripts/assemble_pages_site.py)
+#   deploy ....... GitHub Pages (the Flatpak update source and the web site go live together)
+#   verify-live .. every needed file is reachable and the live repository verifies like a user's Flatpak (scripts/check_flatpak_live.sh)
+#   publish ...... environment release-publish (approval 2): the draft is verified again and published (scripts/release_draft.sh)
+#
+# The PRIMARY signing key is never in GitHub; only the signing subkey is (secrets TSW_FLATPAK_SIGNING_KEY and TSW_FLATPAK_SIGNING_PASSPHRASE, variables TSW_FLATPAK_SIGNING_FINGERPRINT and TSW_FLATPAK_SIGNING_SUBKEY_ID of the environment flatpak-release; the primary fingerprint and the subkey id are checked in full).
+# Permissions: read-only everywhere except `draft` and `publish` (contents: write, no key) and `deploy` (pages/id-token). The key is referenced in ONE step of ONE job. There is no
+# workflow_run trigger and no other trigger than the owner's tag. Tags are never created by a workflow. A published release is never touched. Failure recovery: re-run the failed jobs
+# only (documentation/release-pipeline.md); a failure before `draft` leaves nothing public, a failure after `deploy` leaves the update source live and the release a draft.
 name: release
 
 on:
@@ -22,77 +35,312 @@ jobs:
   guard:
     if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
-    steps:
-      - name: The tag must be an exact numeric version tag (GitHub's filter is only a glob)
-        env:
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          [[ "$TAG_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "not a version tag: $TAG_NAME" >&2; exit 1; }
-
-  set:
-    needs: guard
-    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
-    uses: ./.github/workflows/release-set.yml
-    permissions:
-      contents: read
-
-  publish:
-    needs: [guard, set]
-    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    permissions:
-      contents: write
-      actions: read
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
     steps:
       - name: Check out the tagged commit (no stored credentials, full history for the main check)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Verify tag, checkout, main and version; refuse an existing release
+      - name: Verify tag, commit on main, version and pinned actions
         id: verify
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           [[ "$TAG_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "not a version tag: $TAG_NAME" >&2; exit 1; }
-          test "$(git rev-parse HEAD)" = "$(git rev-parse "${GITHUB_SHA}^{commit}")" || { echo 'Tag changed after the build' >&2; exit 1; }
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "${GITHUB_SHA}^{commit}")" || { echo 'Tag changed after the checkout' >&2; exit 1; }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_SHA is not on main: releases are made from a tag on main only" >&2; exit 1; }
           python3 scripts/version.py check
           version="$(python3 scripts/version.py show)"
           [ "$TAG_NAME" = "v$version" ] || { echo "tag $TAG_NAME does not match APP_VERSION $version" >&2; exit 1; }
-          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            echo 'Release already exists; refusing to replace it or its assets' >&2
-            exit 1
-          fi
+          scripts/pin_actions.sh --check
+          test -s packaging/flatpak/stable-repo.gpg || { echo "packaging/flatpak/stable-repo.gpg (the public signing key) is missing in the tagged commit" >&2; exit 1; }
+          scripts/flatpak_keys.sh check-pin packaging/flatpak/stable-repo.gpg packaging/project.conf
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Download the verified release set built from this commit
+      - name: The live channel state must allow this version (refuses a downgrade, a pre-release and a re-publish)
         env:
-          GH_TOKEN: ${{ github.token }}
-          SET_ARTIFACT: ${{ needs.set.outputs.artifact }}
           VERSION: ${{ steps.verify.outputs.version }}
         run: |
           set -euo pipefail
-          case "$SET_ARTIFACT" in "tsw-forever-$VERSION-release-all-$GITHUB_SHA") ;; *) echo "artifact $SET_ARTIFACT is not the set of this commit and version" >&2; exit 1;; esac
-          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$SET_ARTIFACT" --dir dist
-          # BUILD-INFO.txt documents the build and is not a release file
-          rm -f dist/BUILD-INFO.txt
-          (cd dist && sha256sum --check SHA256SUMS)
-          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 4
-          test -s "dist/tsw-forever-$VERSION.flatpak"
-          test -s "dist/tsw-forever-$VERSION-src.tar.gz"
-          test -s "dist/tsw-forever-$VERSION-windows-setup.exe"
-          test -s dist/SHA256SUMS
-          python3 -I scripts/check_release_set.py dist --version "$VERSION" --with-windows
-          python3 -I scripts/check_public_source.py "dist/tsw-forever-$VERSION-src.tar.gz"
+          # shellcheck disable=SC1091
+          . packaging/project.conf
+          site="${FLATPAK_REPO_URL%/repo}"
+          code="$(curl --proto '=https' --proto-redir '=https' --max-redirs 3 -sS -o "$RUNNER_TEMP/channels.json" -w '%{http_code}' "$site/channels.json")"
+          case "$code" in
+            200) live="$RUNNER_TEMP/channels.json";;
+            404) live="";;   # nothing published yet
+            *) echo "cannot read the live channel state (HTTP $code); refusing to release blind" >&2; exit 1;;
+          esac
+          python3 -I scripts/flatpak_channel.py plan "$VERSION" stable $live
+
+  # NO build happens in this workflow. The candidate (unsigned Flatpak repository, source archive, Windows installer) was built, tested and checked by build.yml when the commit was
+  # pushed to main. This job finds that run for EXACTLY the tagged commit, requires it to be successful and complete, checks every file against the run's candidate.json (version,
+  # full commit id, SHA-256) and hands the verified files to the following jobs as artifacts of this run. No run, a failed run, an expired artifact or any difference stops the release;
+  # a newer commit's or another run's artifacts are never used. Expired (30 days): owner runs `gh workflow run build.yml --ref <tag>` and pushes nothing new, then re-runs this workflow.
+  candidate:
+    needs: guard
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      build_run: ${{ steps.find.outputs.run_id }}
+      repo_artifact: tsw-forever-${{ needs.guard.outputs.version }}-unsigned-repo-${{ github.sha }}
+      windows_artifact: tsw-forever-${{ needs.guard.outputs.version }}-windows-${{ github.sha }}
+    steps:
+      - name: Check out the tagged commit (no stored credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Find the successful build of exactly this commit and check that its artifacts are complete and not expired
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build.yml --commit "$GITHUB_SHA" --status success --limit 50 --json databaseId,headSha,conclusion,workflowName,createdAt)"
+          run_id="$(jq -r --arg sha "$GITHUB_SHA" '[.[] | select(.headSha == $sha and .conclusion == "success" and .workflowName == "build")] | sort_by(.createdAt) | last | .databaseId // empty' <<<"$runs")"
+          if [ -z "$run_id" ]; then
+            echo "There is no successful run of the workflow 'build' for exactly $GITHUB_SHA." >&2
+            echo "Push the commit to main and wait for a green build, or start 'gh workflow run build.yml --ref $GITHUB_REF_NAME'. Nothing is built here and nothing was published." >&2
+            exit 1
+          fi
+          names="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | .name')"
+          for kind in unsigned-repo source windows candidate; do
+            grep -qx "tsw-forever-${VERSION}-${kind}-${GITHUB_SHA}" <<<"$names" || { echo "artifact tsw-forever-${VERSION}-${kind}-${GITHUB_SHA} of build run $run_id is missing or expired; run 'gh workflow run build.yml --ref $GITHUB_REF_NAME' and re-run this workflow" >&2; exit 1; }
+          done
+          echo "build run $run_id is the build of $GITHUB_SHA"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download the artifacts of that build run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tsw-forever-${{ needs.guard.outputs.version }}-*-${{ github.sha }}
+          path: all
+          run-id: ${{ steps.find.outputs.run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Verify every file against the candidate manifest of the build run
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p manifest parts
+          mv "all/tsw-forever-${VERSION}-candidate-${GITHUB_SHA}/candidate.json" manifest/candidate.json
+          rmdir "all/tsw-forever-${VERSION}-candidate-${GITHUB_SHA}"
+          for kind in unsigned-repo source windows; do mv "all/tsw-forever-${VERSION}-${kind}-${GITHUB_SHA}" parts/; done
+          test -z "$(ls -A all)" || { echo "unexpected artifacts: $(ls all)" >&2; exit 1; }
+          python3 -I scripts/release_candidate.py verify parts manifest/candidate.json --version "$VERSION" --commit "$GITHUB_SHA"
+
+      - name: Hand over the verified unsigned repository (kept 7 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tsw-forever-${{ needs.guard.outputs.version }}-unsigned-repo-${{ github.sha }}
+          path: parts/tsw-forever-${{ needs.guard.outputs.version }}-unsigned-repo-${{ github.sha }}/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Hand over the verified source archive (kept 7 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tsw-forever-${{ needs.guard.outputs.version }}-source-${{ github.sha }}
+          path: parts/tsw-forever-${{ needs.guard.outputs.version }}-source-${{ github.sha }}/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Hand over the verified Windows installer (kept 7 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tsw-forever-${{ needs.guard.outputs.version }}-windows-${{ github.sha }}
+          path: parts/tsw-forever-${{ needs.guard.outputs.version }}-windows-${{ github.sha }}/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: [guard, candidate]
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: flatpak-release
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the tagged commit (no stored credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the signing tools (distribution packages only)
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends flatpak ostree gnupg gpg-agent python3
+
+      - name: Fetch the unsigned repository that the previous job built
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT: ${{ needs.candidate.outputs.repo_artifact }}
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir build/in
+          mkdir -p build/flatpak/repo
+          tar -xf build/in/repo.tar -C build/flatpak/repo --no-same-owner --no-same-permissions
+          . packaging/project.conf
+          test "$(ostree rev-parse --repo=build/flatpak/repo "app/$APP_ID/x86_64/stable")" = "$(cat build/in/commit.txt)"
+
+      - name: Sign, verify and prove the update (the ONLY step that sees the key)
+        env:
+          TSW_FLATPAK_SIGNING_KEY: ${{ secrets.TSW_FLATPAK_SIGNING_KEY }}
+          TSW_FLATPAK_SIGNING_PASSPHRASE: ${{ secrets.TSW_FLATPAK_SIGNING_PASSPHRASE }}
+          TSW_FLATPAK_SIGNING_FINGERPRINT: ${{ vars.TSW_FLATPAK_SIGNING_FINGERPRINT }}
+          TSW_FLATPAK_SIGNING_SUBKEY_ID: ${{ vars.TSW_FLATPAK_SIGNING_SUBKEY_ID }}
+        run: scripts/flatpak_sign_ci.sh build/flatpak/repo packaging/flatpak/stable-repo.gpg
+
+      - name: Pack the signed repository (the commit must not have changed by the signing)
+        run: |
+          set -euo pipefail
+          . packaging/project.conf
+          mkdir -p build/signed
+          commit="$(ostree rev-parse --repo=build/flatpak/repo "app/$APP_ID/x86_64/stable")"
+          test "$commit" = "$(cat build/in/commit.txt)" || { echo "the signing changed the commit" >&2; exit 1; }
+          echo "$commit" > build/signed/commit.txt
+          tar --sort=name --owner=0 --group=0 --numeric-owner -C build/flatpak/repo -cf build/signed/repo.tar .
+          if grep -rIl -e 'PRIVATE KEY' build/signed 2>/dev/null | grep -q .; then echo "key material in the artifact: refused" >&2; exit 1; fi
+
+      - name: Upload the signed repository (public data only; kept 7 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tsw-forever-${{ needs.guard.outputs.version }}-signed-repo-${{ github.sha }}
+          path: build/signed/
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-signed:
+    needs: [guard, candidate, sign]
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      FREEDESKTOP_VERSION: "25.08"
+    steps:
+      - name: Check out the tagged commit (no stored credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends flatpak ostree gnupg python3 python3-yaml curl desktop-file-utils appstream jq libarchive-tools
+
+      - name: Download the signed repository, the unsigned record and the source archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tsw-forever-${{ needs.guard.outputs.version }}-*-${{ github.sha }}
+          path: parts
+
+      - name: Unpack the signed repository and compare the commit with the unsigned build
+        run: |
+          set -euo pipefail
+          . packaging/project.conf
+          v="${{ needs.guard.outputs.version }}"
+          signed="parts/tsw-forever-${v}-signed-repo-${GITHUB_SHA}"
+          unsigned="parts/tsw-forever-${v}-unsigned-repo-${GITHUB_SHA}"
+          mkdir -p build/flatpak/repo
+          tar -xf "$signed/repo.tar" -C build/flatpak/repo --no-same-owner --no-same-permissions
+          commit="$(ostree rev-parse --repo=build/flatpak/repo "app/$APP_ID/x86_64/stable")"
+          test "$commit" = "$(cat "$signed/commit.txt")" && test "$commit" = "$(cat "$unsigned/commit.txt")" || { echo "the signed repository is not the repository that was built" >&2; exit 1; }
+
+      - name: Verify with the committed public key only, as a user's Flatpak does, and prove the update over the signed deltas
+        run: |
+          scripts/flatpak_keys.sh verify-repo packaging/flatpak/stable-repo.gpg build/flatpak/repo
+          scripts/check_flatpak_delta_update.sh --require-delta build/flatpak/repo packaging/flatpak/stable-repo.gpg
+
+      - name: Build the signed stable bundle from the signed repository (update source and public key inside)
+        env:
+          FLATPAK_BRANCH: stable
+        run: scripts/build_flatpak.sh bundle
+
+      - name: The bundle must be the bundle of the signed repository
+        run: |
+          . packaging/project.conf
+          scripts/check_bundle_matches_repo.sh build/flatpak/tsw-launcher.flatpak build/flatpak/repo packaging/flatpak/stable-repo.gpg "$FLATPAK_REPO_URL"
+
+      - name: Audit the bundle - install it, check that it starts, that the update source is configured and that no Microsoft or Funcom file, Windows program or game data is inside
+        run: |
+          set -euo pipefail
+          v="${{ needs.guard.outputs.version }}"
+          src="parts/tsw-forever-${v}-source-${GITHUB_SHA}/tsw-forever-${v}-src.tar.gz"
+          . packaging/project.conf
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub "org.freedesktop.Platform//${FREEDESKTOP_VERSION}"
+          flatpak install --user --noninteractive build/flatpak/tsw-launcher.flatpak
+          flatpak remotes --user --columns=url | grep -qx "$FLATPAK_REPO_URL" || { echo "the stable bundle did not configure the update source $FLATPAK_REPO_URL" >&2; exit 1; }
+          reported="$(flatpak run --command=tsw-launch "org.tswlauncher.Launcher//stable" --version)"
+          echo "$reported"
+          case "$reported" in *"$v"*) ;; *) echo "the installed Flatpak reports another version than $v" >&2; exit 1;; esac
+          python3 -I scripts/check_release_artifacts.py "$src" "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/stable/active/files"
+          python3 -I scripts/check_licenses.py "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/stable/active/files/share/licenses/tsw-forever"
+
+      - name: Upload the signed bundle (kept 7 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tsw-forever-${{ needs.guard.outputs.version }}-bundle-${{ github.sha }}
+          path: build/flatpak/tsw-launcher.flatpak
+          if-no-files-found: error
+          retention-days: 7
+
+  draft:
+    needs: [guard, candidate, verify-signed]
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tagged commit (no stored credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the signed bundle, the source archive and the Windows installer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tsw-forever-${{ needs.guard.outputs.version }}-*-${{ github.sha }}
+          path: parts
+
+      - name: Assemble the four release files and verify the set
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          v="$VERSION"
+          case "${{ needs.candidate.outputs.windows_artifact }}" in *"-$v-"*"-$GITHUB_SHA") ;; *) echo "Windows artifact name does not carry version $v and commit $GITHUB_SHA" >&2; exit 1;; esac
+          (cd "parts/${{ needs.candidate.outputs.windows_artifact }}" && sha256sum -c SHA256SUMS-windows)
+          (cd "parts/tsw-forever-${v}-source-${GITHUB_SHA}" && sha256sum -c SHA256SUMS-source)
+          mkdir -p dist
+          cp "parts/tsw-forever-${v}-bundle-${GITHUB_SHA}/tsw-launcher.flatpak" "dist/tsw-forever-${v}.flatpak"
+          cp "parts/tsw-forever-${v}-source-${GITHUB_SHA}/tsw-forever-${v}-src.tar.gz" dist/
+          cp "parts/${{ needs.candidate.outputs.windows_artifact }}/tsw-forever-${v}-windows-setup.exe" dist/
+          (cd dist && sha256sum "tsw-forever-${v}.flatpak" "tsw-forever-${v}-src.tar.gz" "tsw-forever-${v}-windows-setup.exe" > SHA256SUMS && cat SHA256SUMS)
+          python3 -I scripts/check_release_set.py dist --version "$v" --with-windows
+          python3 -I scripts/check_public_source.py "dist/tsw-forever-${v}-src.tar.gz"
+          python3 -I scripts/check_release_artifacts.py "dist/tsw-forever-${v}-src.tar.gz"
+          tar xzOf "dist/tsw-forever-${v}-src.tar.gz" "tsw-forever-${v}/packaging/project.conf" | grep -qx "APP_VERSION=$v"
 
       - name: Extract release notes from the matching changelog entry
         env:
@@ -109,22 +357,155 @@ jobs:
           pathlib.Path('release-notes.md').write_text(f'# TSW-Forever {version}\n\n' + match.group(1).strip() + '\n', encoding='utf-8')
           PY
 
-      - name: Upload to a new draft, verify the remote assets, then publish
+      - name: Fill the DRAFT release, read the files back and compare them (nothing is published here)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
+        run: scripts/release_draft.sh upload "$TAG_NAME" release-notes.md dist
+
+      - name: Keep the verified release files for the final check (kept 7 days)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tsw-forever-${{ needs.guard.outputs.version }}-release-dist-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  pages-build:
+    needs: [guard, sign, draft]
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tagged commit (no stored credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends flatpak ostree python3 python3-yaml gnupg curl
+
+      - name: Download the signed repository
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tsw-forever-${{ needs.guard.outputs.version }}-signed-repo-${{ github.sha }}
+          path: signed
+
+      - name: Unpack and verify the signed repository with the committed public key
         run: |
           set -euo pipefail
-          version="${TAG_NAME#v}"
-          gh release create "$TAG_NAME" --draft --verify-tag --title "TSW-Forever ${version}" --notes-file release-notes.md
-          gh release upload "$TAG_NAME" \
-            "dist/tsw-forever-${version}.flatpak" \
-            "dist/tsw-forever-${version}-src.tar.gz" \
-            "dist/tsw-forever-${version}-windows-setup.exe" \
-            dist/SHA256SUMS
-          mkdir -p downloaded
-          gh release download "$TAG_NAME" --dir downloaded
-          cmp dist/SHA256SUMS downloaded/SHA256SUMS
-          (cd downloaded && sha256sum --check SHA256SUMS)
-          test "$(find downloaded -maxdepth 1 -type f | wc -l)" -eq 4
-          gh release edit "$TAG_NAME" --draft=false
+          mkdir -p build/flatpak/repo
+          tar -xf signed/repo.tar -C build/flatpak/repo --no-same-owner --no-same-permissions
+          scripts/flatpak_keys.sh verify-repo packaging/flatpak/stable-repo.gpg build/flatpak/repo
+
+      - name: Create the install files and the channel record, then assemble the site (web site sources + OSTree repository + install files in one folder)
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          . packaging/project.conf
+          site="${FLATPAK_REPO_URL%/repo}"
+          code="$(curl --proto '=https' --proto-redir '=https' --max-redirs 3 -sS -o "$RUNNER_TEMP/channels.json" -w '%{http_code}' "$site/channels.json")"
+          case "$code" in
+            200) live="$RUNNER_TEMP/channels.json";;
+            404) live="";;
+            *) echo "cannot read the live channel state (HTTP $code); refusing to publish blind" >&2; exit 1;;
+          esac
+          branches="$(python3 -I scripts/flatpak_channel.py plan "$VERSION" stable $live)"
+          scripts/gen_flatpak_refs.sh build/flatpak/refs packaging/flatpak/stable-repo.gpg
+          [ -n "$live" ] && cp "$live" build/flatpak/channels.json
+          for b in $branches; do
+            commit="$(ostree rev-parse --repo=build/flatpak/repo "app/$APP_ID/x86_64/$b")"
+            python3 -I scripts/flatpak_channel.py record build/flatpak/channels.json "$b" "$VERSION" "$commit"
+          done
+          website=()
+          [ -d website ] && website=(--website website)
+          python3 -I scripts/assemble_pages_site.py --repo build/flatpak/repo --refs build/flatpak/refs --channels-json build/flatpak/channels.json --out build/flatpak/site "${website[@]}"
+
+      - name: Upload the site (kept 7 days)
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: build/flatpak/site
+          retention-days: 7
+
+  deploy:
+    needs: [guard, pages-build]
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: pages-site
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  verify-live:
+    needs: [guard, sign, deploy]
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tagged commit (no stored credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ostree gnupg curl
+
+      - name: Download the record of the signed repository (the commit that must be live)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tsw-forever-${{ needs.guard.outputs.version }}-signed-repo-${{ github.sha }}
+          path: signed
+
+      - name: The live update source must be reachable and must verify like a user's Flatpak (retries while Pages becomes reachable)
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          . packaging/project.conf
+          site="${FLATPAK_REPO_URL%/repo}"
+          scripts/check_flatpak_live.sh --site "$site" --pub packaging/flatpak/stable-repo.gpg --expect-commit "$(cat signed/commit.txt)" --retries 45 --interval 20
+
+  publish:
+    needs: [guard, draft, verify-live]
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event_name == 'push' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release-publish
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tagged commit (no stored credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the verified release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tsw-forever-${{ needs.guard.outputs.version }}-release-dist-${{ github.sha }}
+          path: dist
+
+      - name: Verify the draft once more (still a draft, exactly four files, byte-identical), publish it and read the result back
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: scripts/release_draft.sh publish "$TAG_NAME" dist

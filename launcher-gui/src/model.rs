@@ -17,20 +17,161 @@ use tsw_launch::runner::Runner;
 use crate::i18n::Msg;
 use crate::messages;
 
-/// Shown in the advanced view as the patcher status. Deliberately not a result: our own patcher does not exist yet.
-pub fn patch_notice() -> Msg {
-    Msg::plain(
-        "Patcher: the client patch system is built in but stays switched off until the project signing key exists. No client patch is checked or installed. “Play” relies on the local checks only.",
-    )
+/// What the launcher-update block of the main view shows. `state`: 0 = hidden, 1 = available, 2 = installing, 3 = installed (restart), 4 = nothing to
+/// install, 5 = failed (the numbers are those of the window's `update-state`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateBanner {
+    pub state: i32,
+    pub text: Msg,
+    pub detail: Option<Msg>,
+    pub button: Msg,
+    /// A second button (Windows: restore the previous version after a failure).
+    pub secondary: Option<Msg>,
 }
 
-/// The version line of the advanced view: application, patch engine and manifest format (the client patch level is shown by `tsw-launch patch status`).
+/// The update block for a phase of the Flatpak update (pure; `None` = nothing to show). `scope` only changes the hint of a refusal; `dismissed` hides the
+/// block until the next start (never the "restart" reminder, which tells the user that a new version is waiting).
+pub fn update_banner(phase: &tsw_launch::update::flatpak::Phase, scope: Option<tsw_launch::update::flatpak::Scope>, dismissed: bool) -> Option<UpdateBanner> {
+    use tsw_launch::update::flatpak::{Failure, Phase, Scope};
+    let app = || tsw_launch::project::APP_ID.to_string();
+    let command_hint = |system_note: bool| {
+        if system_note && scope == Some(Scope::System) {
+            Msg::new("This is a system-wide installation, so updating may ask for your administrator password. Use your software center or run: flatpak update {0}", [app()])
+        } else {
+            Msg::new("You can also update with your software center, or run: flatpak update {0}", [app()])
+        }
+    };
+    match phase {
+        Phase::Idle => None,
+        _ if dismissed && !matches!(phase, Phase::RestartNeeded | Phase::Working(_)) => None,
+        Phase::Available => Some(UpdateBanner {
+            state: 1,
+            text: Msg::plain("A new version of the launcher is available."),
+            detail: Some(Msg::plain("Flatpak installs it in the background. Your settings and the game stay as they are. Your system may ask you once to allow the update.")),
+            button: Msg::plain("Update launcher"),
+            secondary: None,
+        }),
+        Phase::Working(p) => {
+            Some(UpdateBanner { state: 2, text: Msg::new("Installing the launcher update … {0} %", [p.to_string()]), detail: None, button: Msg::plain("Update launcher"), secondary: None })
+        }
+        Phase::RestartNeeded => Some(UpdateBanner {
+            state: 3,
+            text: Msg::plain("The launcher update is installed. Close the launcher and start it again to use the new version."),
+            detail: None,
+            button: Msg::plain("Close launcher"),
+            secondary: None,
+        }),
+        Phase::NothingToInstall => Some(UpdateBanner {
+            state: 4,
+            text: Msg::plain("Flatpak found nothing to install. The update source may be unreachable, or the update was not allowed."),
+            detail: Some(command_hint(true)),
+            button: Msg::plain("Try again"),
+            secondary: None,
+        }),
+        Phase::Failed(Failure::NotAllowed) => Some(UpdateBanner {
+            state: 5,
+            text: Msg::plain("The update was not allowed. Allow it when your system asks, or update another way."),
+            detail: Some(command_hint(true)),
+            button: Msg::plain("Try again"),
+            secondary: None,
+        }),
+        Phase::Failed(Failure::Network) => Some(UpdateBanner {
+            state: 5,
+            text: Msg::plain("The update source could not be reached. The launcher works as before; try again later."),
+            detail: None,
+            button: Msg::plain("Try again"),
+            secondary: None,
+        }),
+        Phase::Failed(Failure::Other(why)) => {
+            Some(UpdateBanner { state: 5, text: Msg::new("The update could not be installed: {0}", [why.clone()]), detail: Some(command_hint(true)), button: Msg::plain("Try again"), secondary: None })
+        }
+    }
+}
+
+/// The notice that a newer stable version exists (Windows; state 6 of the window's `update-state`). It is no update: the button opens the official release page and the user
+/// installs the new installer by hand. There is no "Later" button: the notice shows again at the next start.
+pub fn release_notice_banner(notice: Option<&tsw_launch::releasenotice::Notice>) -> Option<UpdateBanner> {
+    let notice = notice?;
+    Some(UpdateBanner {
+        state: 6,
+        text: Msg::new("A new version of TSW-Forever ({0}) is available.", [notice.version.clone()]),
+        detail: None,
+        button: Msg::plain("Open download page"),
+        secondary: None,
+    })
+}
+
+/// The update block for the Windows launcher update (pure; `None` = nothing to show). `can_restore` = the signed metadata names the previous version, which can be
+/// installed again after a failure. `dismissed` hides an offer or an error until the next start.
+/// Development feature `windows-self-update` only (see `tsw_launch::update`).
+#[cfg(feature = "windows-self-update")]
+pub fn windows_update_banner(phase: &tsw_launch::update::windows::Phase, can_restore: bool, dismissed: bool) -> Option<UpdateBanner> {
+    use tsw_launch::update::windows::{Failure, Phase, Step};
+    let b = |state, text: Msg, detail: Option<Msg>, button: &str, secondary: Option<Msg>| {
+        let button = match button {
+            "update" => Msg::plain("Update launcher"),
+            _ => Msg::plain("Try again"),
+        };
+        Some(UpdateBanner { state, text, detail, button, secondary })
+    };
+    let restore = || can_restore.then(|| Msg::plain("Restore previous version"));
+    match phase {
+        Phase::Idle | Phase::Started => None,
+        Phase::Available | Phase::Failed(_) if dismissed => None,
+        Phase::Available => b(
+            1,
+            Msg::plain("A new version of the launcher is available."),
+            Some(Msg::plain("It is downloaded and checked first. Then Windows asks for your permission once, and the launcher starts again by itself. Your settings and the game stay as they are.")),
+            "update",
+            None,
+        ),
+        Phase::Working(Step::Downloading) => b(2, Msg::plain("Downloading the launcher update …"), None, "update", None),
+        Phase::Working(Step::Verifying) => b(2, Msg::plain("Checking the downloaded update …"), None, "update", None),
+        Phase::Working(Step::Starting | Step::Installing) => b(2, Msg::plain("Installing the update. Allow the Windows dialog; the launcher closes and starts again by itself."), None, "update", None),
+        Phase::Failed(Failure::Network(_)) => b(5, Msg::plain("The update could not be downloaded. The launcher works as before; try again later."), None, "retry", restore()),
+        Phase::Failed(Failure::Rejected(_)) => b(
+            5,
+            Msg::plain("The downloaded update did not match its signed checksum and was deleted. Nothing was installed."),
+            Some(Msg::plain("Try again later; if it keeps failing, download the installer from the release page and check it there.")),
+            "retry",
+            restore(),
+        ),
+        Phase::Failed(Failure::Storage(why)) => b(5, Msg::new("The update could not be prepared: {0}", [why.clone()]), None, "retry", restore()),
+        Phase::Failed(Failure::NotStarted(why)) => b(
+            5,
+            Msg::new("The installer could not be started: {0}", [why.clone()]),
+            Some(Msg::plain("The launcher works as before. Try again later, or download the installer from the release page.")),
+            "retry",
+            restore(),
+        ),
+        Phase::Failed(Failure::Declined) => b(
+            5,
+            Msg::plain("The installation was cancelled. If you declined Windows' permission dialog, nothing was changed."),
+            Some(Msg::plain("Press the button to try again and allow the Windows dialog.")),
+            "retry",
+            restore(),
+        ),
+        Phase::Failed(Failure::InstallerFailed(code)) => b(
+            5,
+            Msg::new("The installer stopped with the error code {0}. The launcher may not have been updated.", [code.to_string()]),
+            Some(Msg::plain("The launcher works as before. Try again, or restore the previous version.")),
+            "retry",
+            restore(),
+        ),
+        Phase::Failed(Failure::ResultUnknown(why)) => b(
+            5,
+            Msg::new("The result of the installer could not be read: {0}", [why.clone()]),
+            Some(Msg::plain("The launcher works as before. Try again, or restore the previous version.")),
+            "retry",
+            restore(),
+        ),
+    }
+}
+
+/// The installed version, shown small at the bottom right of the window: "TSW-Forever <version>", the version this program was BUILT with (`CARGO_PKG_VERSION` through
+/// `project::APP_VERSION`; no literal). The patch engine and manifest versions are not shown (the client patch level is shown by `tsw-launch patch status`).
 pub fn version_info() -> Msg {
-    Msg::new("TSW-Forever {0} · patch engine {1} · patch manifest format {2}", [tsw_launch::project::APP_VERSION.to_string(), tsw_patch_version(), tsw_launch::project::manifest_format().to_string()])
-}
-
-fn tsw_patch_version() -> String {
-    tsw_launch::project::engine_version().to_string()
+    Msg::new("TSW-Forever {0}", [tsw_launch::project::APP_VERSION.to_string()])
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -390,6 +531,32 @@ pub fn fit_window_size(screen: Option<(f32, f32)>) -> (f32, f32) {
     (fit(WINDOW_SIZE.0, sw - SCREEN_MARGIN.0, WINDOW_MIN.0), fit(WINDOW_SIZE.1, sh - SCREEN_MARGIN.1, WINDOW_MIN.1))
 }
 
+/// The scale factor that `SLINT_SCALE_FACTOR` asks for, read exactly like Slint reads it (a decimal number above zero), else `None`.
+#[cfg(any(target_os = "linux", test))]
+pub fn scale_override(value: Option<&str>) -> Option<f32> {
+    value.and_then(|v| v.trim().parse::<f32>().ok()).filter(|f| f.is_finite() && *f > 0.0)
+}
+
+/// The fixed window's size in PHYSICAL pixels for a logical size and the scale factor in use: the number Slint itself uses for the window it creates
+/// (logical × scale, rounded to the nearest pixel, computed in `f64` like winit does), so that minimum, maximum and the real window size are one and the same.
+/// `None` for anything that is not a usable size (zero, negative, not finite, a scale above 16, a result above 16384 px): the caller then leaves the limits alone.
+///
+/// Why this exists: with `SLINT_SCALE_FACTOR` set, Slint 1.18 creates the fixed window with correctly scaled limits (for example 1500x990 at 1.5), then applies the
+/// limits once more while its own scale factor is still 1.0 (1000x660) and never again, because the logical limits do not change. The compositor is left with a
+/// window that is larger than its own maximum. See `pin_window_limits_for_scale_override` in main.rs.
+#[cfg(any(target_os = "linux", test))]
+pub fn physical_window_limits(logical: (f32, f32), scale: f32) -> Option<(u32, u32)> {
+    const MAX_SCALE: f32 = 16.0;
+    const MAX_PIXELS: f64 = 16384.0;
+    let usable = |v: f32| v.is_finite() && v > 0.0;
+    if !usable(logical.0) || !usable(logical.1) || !usable(scale) || scale > MAX_SCALE {
+        return None;
+    }
+    let physical = |l: f32| (f64::from(l) * f64::from(scale)).round();
+    let (w, h) = (physical(logical.0), physical(logical.1));
+    ((1.0..=MAX_PIXELS).contains(&w) && (1.0..=MAX_PIXELS).contains(&h)).then_some((w as u32, h as u32))
+}
+
 /// The CLI next to this executable (same directory), else `tsw-launch` from `PATH`.
 pub fn cli_binary() -> PathBuf {
     let name = if cfg!(windows) { "tsw-launch.exe" } else { "tsw-launch" };
@@ -455,6 +622,92 @@ pub fn background_image(config_file: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use tsw_launch::update::flatpak::{Failure, Phase, Scope};
+
+    #[test]
+    fn the_release_notice_is_quiet_names_the_version_and_only_opens_the_release_page() {
+        use super::release_notice_banner as banner;
+        let n = tsw_launch::releasenotice::Notice { version: "0.4.0".into(), url: format!("{}/releases/tag/v0.4.0", tsw_launch::project::REPO_URL) };
+        assert_eq!(banner(None), None, "nothing newer: nothing is shown");
+        let b = banner(Some(&n)).unwrap();
+        assert_eq!((b.state, b.secondary.clone()), (6, None));
+        let en = crate::i18n::Catalog::new("en");
+        let (text, button) = (en.render(&b.text), en.render(&b.button));
+        assert_eq!(text, "A new version of TSW-Forever (0.4.0) is available.");
+        assert_eq!(button, "Open download page");
+        assert_eq!(b.detail, None, "no long explanation");
+        // it promises no automatic installation
+        assert!(!text.to_lowercase().contains("install") && !button.to_lowercase().contains("update"), "{text} / {button}");
+    }
+
+    #[cfg(feature = "windows-self-update")]
+    #[test]
+    fn the_windows_update_block_follows_the_steps_and_offers_the_restore_only_after_a_failure() {
+        use super::windows_update_banner as banner;
+        use tsw_launch::update::windows::{Failure, Phase as W, Step};
+        use tsw_launch::update::UpdateError;
+        assert_eq!(banner(&W::Idle, true, false), None);
+        assert_eq!(banner(&W::Started, true, false), None, "the launcher is leaving");
+        let a = banner(&W::Available, true, false).unwrap();
+        assert_eq!((a.state, a.secondary), (1, None), "no restore button on a plain offer");
+        for s in [Step::Downloading, Step::Verifying, Step::Starting, Step::Installing] {
+            assert_eq!(banner(&W::Working(s), true, false).unwrap().state, 2);
+        }
+        for f in [
+            Failure::Network("x".into()),
+            Failure::Rejected(UpdateError::HashMismatch),
+            Failure::Storage("y".into()),
+            Failure::NotStarted("access denied".into()),
+            Failure::Declined,
+            Failure::InstallerFailed(1),
+            Failure::ResultUnknown("handle".into()),
+        ] {
+            let b = banner(&W::Failed(f.clone()), true, false).unwrap();
+            assert_eq!(b.state, 5, "{f:?}");
+            assert_eq!(b.secondary, Some(Msg::plain("Restore previous version")), "{f:?}");
+            assert_eq!(banner(&W::Failed(f.clone()), false, false).unwrap().secondary, None, "{f:?}: nothing to restore without a signed previous version");
+            assert_eq!(banner(&W::Failed(f), true, true), None, "\"Later\" hides it");
+        }
+        assert_eq!(banner(&W::Available, false, true), None);
+        let en = crate::i18n::Catalog::new("en");
+        let declined = en.render(&banner(&W::Failed(Failure::Declined), false, false).unwrap().text);
+        assert!(declined.contains("declined") && declined.contains("nothing was changed"), "{declined}");
+        let not_started = en.render(&banner(&W::Failed(Failure::NotStarted("access denied".into())), false, false).unwrap().text);
+        assert!(not_started.contains("could not be started") && not_started.contains("access denied"), "{not_started}");
+        let failed = en.render(&banner(&W::Failed(Failure::InstallerFailed(5)), false, false).unwrap().text);
+        assert!(failed.contains("error code 5") && !failed.contains("declined"), "a failed installer is not called a declined dialog: {failed}");
+        for step in [Step::Starting, Step::Installing] {
+            let w = en.render(&banner(&W::Working(step.clone()), false, false).unwrap().text);
+            assert!(w.contains("Allow the Windows dialog") && w.contains("starts again by itself"), "{step:?}: {w}");
+        }
+    }
+
+    #[test]
+    fn the_update_block_follows_the_phase_and_never_hides_a_pending_restart() {
+        use super::update_banner as banner;
+        assert_eq!(banner(&Phase::Idle, None, false), None, "offline or unknown: nothing is shown");
+        assert_eq!(banner(&Phase::Available, Some(Scope::User), false).unwrap().state, 1);
+        assert_eq!(banner(&Phase::Working(40), None, false).unwrap().state, 2);
+        assert_eq!(banner(&Phase::RestartNeeded, None, false).unwrap().state, 3);
+        assert_eq!(banner(&Phase::NothingToInstall, None, false).unwrap().state, 4);
+        for f in [Failure::NotAllowed, Failure::Network, Failure::Other("x".into())] {
+            assert_eq!(banner(&Phase::Failed(f), None, false).unwrap().state, 5);
+        }
+        // "Later" hides an offer or an error until the next start, but not a running install and not the restart reminder
+        for p in [Phase::Available, Phase::NothingToInstall, Phase::Failed(Failure::Network)] {
+            assert_eq!(banner(&p, None, true), None, "{p:?}");
+        }
+        assert!(banner(&Phase::RestartNeeded, None, true).is_some() && banner(&Phase::Working(1), None, true).is_some());
+        // the percent is shown, and a system-wide installation says that a password may be asked
+        let w = banner(&Phase::Working(42), None, false).unwrap();
+        assert_eq!(w.text.args, vec![crate::i18n::Arg::Text("42".into())]);
+        let en = crate::i18n::Catalog::new("en");
+        let user = en.render(banner(&Phase::NothingToInstall, Some(Scope::User), false).unwrap().detail.as_ref().unwrap());
+        let sys = en.render(banner(&Phase::NothingToInstall, Some(Scope::System), false).unwrap().detail.as_ref().unwrap());
+        assert!(user.contains("flatpak update org.tswlauncher.Launcher") && !user.contains("password"), "{user}");
+        assert!(sys.contains("administrator password") && sys.contains("flatpak update org.tswlauncher.Launcher"), "{sys}");
+    }
+
     #[test]
     fn notice_texts_match_the_constants() {
         let en = crate::i18n::Catalog::new("en");
@@ -546,11 +799,52 @@ mod tests {
         let (t, k) = headline(&bad);
         assert_eq!(en.render(&t), "Not ready: client missing. Details are in the advanced view.");
         assert!(de.render(&t).starts_with("Nicht bereit: client missing.") && de.render(&t).contains("erweiterten Ansicht") && k == 2);
-        assert!(de.render(&patch_notice()).contains("Signaturschlüssel") && en.render(&patch_notice()).contains("signing key"));
         let v = version_info();
-        assert!(en.render(&v).starts_with(&format!("TSW-Forever {} · patch engine ", env!("CARGO_PKG_VERSION"))), "{}", en.render(&v));
-        assert!(de.render(&v).contains("Patch-Engine") && de.render(&v).contains("Manifestformat"));
+        for text in [en.render(&v), de.render(&v)] {
+            assert_eq!(text, format!("TSW-Forever {}", env!("CARGO_PKG_VERSION")), "the version of the build, nothing else");
+            assert!(!text.contains("engine") && !text.contains("Engine") && !text.contains("anifest") && !text.contains("ignatur"), "{text}");
+        }
         assert_eq!(env!("CARGO_PKG_VERSION"), tsw_launch::project::APP_VERSION, "GUI and CLI report one application version");
+    }
+
+    #[test]
+    fn the_physical_window_limits_follow_the_scale_factor_and_round_like_the_window_itself() {
+        let normal = WINDOW_SIZE;
+        for (scale, expected) in [(1.0, (1000, 660)), (1.25, (1250, 825)), (1.5, (1500, 990)), (1.75, (1750, 1155)), (2.0, (2000, 1320)), (3.0, (3000, 1980))] {
+            assert_eq!(physical_window_limits(normal, scale), Some(expected), "scale {scale}");
+        }
+        // rounding: to the nearest pixel, exactly the number winit computes for the window (f32 scale widened to f64)
+        assert_eq!(physical_window_limits((1000.0, 660.0), 1.1), Some((1100, 726)));
+        assert_eq!(physical_window_limits((1000.0, 660.0), 1.3333), Some((1333, 880)));
+        assert_eq!(physical_window_limits((912.0, 480.0), 1.5), Some((1368, 720)), "a window shrunk for a small display scales as well");
+        assert_eq!(physical_window_limits((1000.0, 661.0), 1.5), Some((1500, 992)), "991.5 rounds up");
+        // invalid values leave the limits alone
+        for (size, scale) in [
+            ((0.0, 660.0), 1.5),
+            ((1000.0, 0.0), 1.5),
+            ((-1.0, 660.0), 1.5),
+            ((f32::NAN, 660.0), 1.5),
+            ((1000.0, f32::INFINITY), 1.5),
+            (normal, 0.0),
+            (normal, -1.5),
+            (normal, f32::NAN),
+            (normal, f32::INFINITY),
+            (normal, 16.5),
+            ((1.0e6, 1.0e6), 2.0),
+            ((0.001, 660.0), 1.0),
+        ] {
+            assert_eq!(physical_window_limits(size, scale), None, "{size:?} at {scale}");
+        }
+    }
+
+    #[test]
+    fn the_scale_override_is_read_like_slint_reads_it() {
+        assert_eq!(scale_override(Some("1.5")), Some(1.5));
+        assert_eq!(scale_override(Some(" 2 ")), Some(2.0));
+        assert_eq!(scale_override(Some("1")), Some(1.0));
+        for bad in [None, Some(""), Some("abc"), Some("0"), Some("-1"), Some("NaN"), Some("inf"), Some("1,5")] {
+            assert_eq!(scale_override(bad), None, "{bad:?}");
+        }
     }
 
     #[test]

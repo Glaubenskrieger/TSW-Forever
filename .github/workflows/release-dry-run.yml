@@ -1,0 +1,136 @@
+# REHEARSAL of the release pipeline on a real runner, with a THROW-AWAY key that is generated inside the job and thrown away with the runner. It uses no secret, no environment and no
+# write permission, creates no tag, release, commit or Pages deployment, and nothing it produces is published. It runs the same scripts as release.yml: the unsigned stable build, the
+# signing step (scripts/flatpak_sign_ci.sh with the subkey from the environment variables, here a throw-away subkey), the verification with the public key, the update proof over the
+# signed deltas, the signed bundle and its audit, the Pages site assembly and the live check against a LOCAL web server. Start it by hand (Actions -> release-dry-run -> Run workflow);
+# main only. The throw-away key never leaves this job and has nothing to do with the production key of the environment flatpak-release.
+name: release-dry-run
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-dry-run-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/flatpak-stable-build.yml
+    with:
+      dry_run: true
+    permissions:
+      contents: read
+
+  rehearse:
+    needs: build
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      FREEDESKTOP_VERSION: "25.08"
+    steps:
+      - name: Check out the repository (read-only token, no stored credentials)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Refuse a commit that is not part of main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_SHA is not on main: the rehearsal runs on main only" >&2; exit 1; }
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends flatpak ostree gnupg gpg-agent python3 python3-yaml curl openssl desktop-file-utils appstream jq libarchive-tools
+
+      - name: Download the unsigned repository and the source archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tsw-forever-${{ needs.build.outputs.version }}-*-${{ github.sha }}
+          path: parts
+
+      - name: Unpack the unsigned repository
+        run: |
+          set -euo pipefail
+          . packaging/project.conf
+          v="${{ needs.build.outputs.version }}"
+          unsigned="parts/tsw-forever-${v}-unsigned-repo-${GITHUB_SHA}"
+          mkdir -p build/flatpak/repo
+          tar -xf "$unsigned/repo.tar" -C build/flatpak/repo --no-same-owner --no-same-permissions
+          test "$(ostree rev-parse --repo=build/flatpak/repo "app/$APP_ID/x86_64/stable")" = "$(cat "$unsigned/commit.txt")"
+
+      - name: Create a THROW-AWAY key (RSA 4096 primary + signing subkey, with a passphrase like the production keys) outside the repository and hand its subkey over like the environment does
+        run: |
+          set -euo pipefail
+          keys="$RUNNER_TEMP/dry-run-keys"; mkdir -m 700 "$keys"
+          pw="$(head -c 24 /dev/urandom | base64 | tr -d '=+/')"
+          echo "::add-mask::$pw"
+          printf '%s' "$pw" > "$keys/passphrase"; chmod 600 "$keys/passphrase"
+          export TSW_TEST_KEY_ALGO=rsa4096 TSW_TEST_KEY_PASSPHRASE="$pw"
+          fpr="$(scripts/flatpak_keys.sh generate-split "$keys/gnupg" "TSW dry run throw-away <dry-run@example.invalid>" | tail -1)"
+          scripts/flatpak_keys.sh export-public "$keys/gnupg" "$fpr" "$keys/stable-repo.gpg"
+          scripts/flatpak_keys.sh export-ci-subkey "$keys/gnupg" "$fpr" "$keys/ci-subkey.b64"
+          scripts/flatpak_keys.sh inspect-ci-export "$keys/ci-subkey.b64"
+          subid="$(scripts/flatpak_keys.sh fingerprints "$keys/stable-repo.gpg" | awk '$1=="subkey"{print substr($2, length($2)-15)}')"
+          echo "DRY_RUN_FPR=$fpr" >> "$GITHUB_ENV"
+          echo "DRY_RUN_SUBID=$subid" >> "$GITHUB_ENV"
+          echo "DRY_RUN_PUB=$keys/stable-repo.gpg" >> "$GITHUB_ENV"
+          echo "DRY_RUN_KEYS=$keys" >> "$GITHUB_ENV"
+
+      - name: Sign, verify and prove the update with the throw-away subkey (the same script as release.yml, the same variable names)
+        run: |
+          TSW_FLATPAK_SIGNING_KEY="$(cat "$DRY_RUN_KEYS/ci-subkey.b64")" \
+          TSW_FLATPAK_SIGNING_PASSPHRASE="$(cat "$DRY_RUN_KEYS/passphrase")" \
+          TSW_FLATPAK_SIGNING_FINGERPRINT="$DRY_RUN_FPR" \
+          TSW_FLATPAK_SIGNING_SUBKEY_ID="$DRY_RUN_SUBID" \
+          TSW_FLATPAK_SIGNING_PIN_FILE=/dev/null \
+          scripts/flatpak_sign_ci.sh build/flatpak/repo "$DRY_RUN_PUB"
+
+      - name: Build the signed bundle and check that it is the bundle of the signed repository
+        env:
+          FLATPAK_BRANCH: stable
+          FLATPAK_STABLE_KEY: ${{ env.DRY_RUN_PUB }}
+        run: |
+          set -euo pipefail
+          scripts/build_flatpak.sh bundle
+          . packaging/project.conf
+          scripts/check_bundle_matches_repo.sh build/flatpak/tsw-launcher.flatpak build/flatpak/repo "$DRY_RUN_PUB" "$FLATPAK_REPO_URL"
+
+      - name: Audit the bundle - install it and check that it starts and that no Microsoft or Funcom file or game data is inside
+        run: |
+          set -euo pipefail
+          v="${{ needs.build.outputs.version }}"
+          src="parts/tsw-forever-${v}-source-${GITHUB_SHA}/tsw-forever-${v}-src.tar.gz"
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub "org.freedesktop.Platform//${FREEDESKTOP_VERSION}"
+          flatpak install --user --noninteractive build/flatpak/tsw-launcher.flatpak
+          reported="$(flatpak run --command=tsw-launch "org.tswlauncher.Launcher//stable" --version)"
+          echo "$reported"
+          case "$reported" in *"$v"*) ;; *) echo "the installed Flatpak reports another version than $v" >&2; exit 1;; esac
+          python3 -I scripts/check_release_artifacts.py "$src" "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/stable/active/files"
+
+      - name: Assemble the Pages site and check it from a LOCAL web server like the live check does (nothing is deployed)
+        run: |
+          set -euo pipefail
+          . packaging/project.conf
+          v="${{ needs.build.outputs.version }}"
+          scripts/gen_flatpak_refs.sh build/flatpak/refs "$DRY_RUN_PUB"
+          commit="$(ostree rev-parse --repo=build/flatpak/repo "app/$APP_ID/x86_64/stable")"
+          python3 -I scripts/flatpak_channel.py record build/flatpak/channels.json stable "$v" "$commit"
+          website=(); [ -d website ] && website=(--website website)
+          python3 -I scripts/assemble_pages_site.py --repo build/flatpak/repo --refs build/flatpak/refs --channels-json build/flatpak/channels.json --out build/flatpak/site "${website[@]}"
+          python3 -u -I -m http.server 8765 --bind 127.0.0.1 --directory build/flatpak/site >"$RUNNER_TEMP/http.log" 2>&1 &
+          srv=$!
+          trap 'kill $srv 2>/dev/null || true' EXIT
+          sleep 2
+          scripts/check_flatpak_live.sh --site http://127.0.0.1:8765 --pub "$DRY_RUN_PUB" --expect-commit "$commit" --allow-loopback-http --retries 5 --interval 2
+
+      - name: Remove the throw-away key
+        if: ${{ always() }}
+        run: rm -rf "$RUNNER_TEMP/dry-run-keys"

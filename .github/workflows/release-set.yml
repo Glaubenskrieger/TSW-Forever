@@ -30,6 +30,8 @@ jobs:
   windows:
     if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
     uses: ./.github/workflows/windows.yml
+    with:
+      use_cache: false
     permissions:
       contents: read
 
@@ -48,7 +50,7 @@ jobs:
           [ "${{ needs.linux.result }}" = success ] && [ "${{ needs.windows.result }}" = success ] || { echo "linux=${{ needs.linux.result }} windows=${{ needs.windows.result }}: no combined set" >&2; exit 1; }
 
       - name: Check out the repository (read-only token, no stored credentials, full history for the main check)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -69,13 +71,13 @@ jobs:
           echo "artifact=tsw-forever-$version-release-all-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Download the Linux part (same version, same commit)
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.linux.outputs.artifact }}
           path: parts/linux
 
       - name: Download the Windows part (same version, same commit)
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.windows.outputs.artifact }}
           path: parts/windows
@@ -102,7 +104,7 @@ jobs:
           echo "version: $v" >> "$set/BUILD-INFO.txt"
 
       - name: Upload the combined release set as one workflow artifact (no release is created; kept 30 days)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.version.outputs.artifact }}
           path: build/release-set/

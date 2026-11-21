@@ -68,6 +68,15 @@ foreach ($exe in @("tsw-launcher.exe", "tsw-launch.exe")) {
     }
 }
 
+# Product guard (decision 2026-11: Windows has no automatic update): the experimental signed-metadata updater is compiled only with the Cargo feature `windows-self-update`, which this
+# script never passes. If a product executable nevertheless contains strings that exist only in that code, the build fails (launcher-gui/tests/product_build.rs checks the same in the tests).
+foreach ($exe in @("tsw-launcher.exe", "tsw-launch.exe")) {
+    $text = [System.Text.Encoding]::GetEncoding(28591).GetString([System.IO.File]::ReadAllBytes((Join-Path $stage $exe)))
+    foreach ($needle in @("tsw-forever-update 1", "windows-sha256", "previous-installer", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "the update metadata signature is not valid")) {
+        if ($text.Contains($needle)) { throw "$exe contains the experimental Windows self-update ('$needle'): a product build must not enable the Cargo feature windows-self-update" }
+    }
+}
+
 # our own console program must run on this machine and report exactly the project version (no game, no network)
 $reported = (& (Join-Path $stage "tsw-launch.exe") --version) -join " "
 if ($LASTEXITCODE -ne 0 -or $reported -notmatch [regex]::Escape($version)) { throw "tsw-launch.exe --version reported '$reported', expected $version" }
@@ -94,7 +103,9 @@ if (-not $SkipInstaller) {
 $sumFile = Join-Path $out "SHA256SUMS-windows"
 $sums = foreach ($a in $artifacts) { "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 $a).Hash.ToLower(), (Split-Path $a -Leaf) }
 # LF line endings and no BOM, so sha256sum -c works on every platform (Set-Content would write CRLF)
-[System.IO.File]::WriteAllText($sumFile, (($sums -join "`n") + "`n"), (New-Object System.Text.ASCIIEncoding))
+# (with -SkipInstaller there is nothing to list: the file stays empty instead of holding one blank line)
+$sumText = if ($artifacts.Count -gt 0) { ($sums -join "`n") + "`n" } else { "" }
+[System.IO.File]::WriteAllText($sumFile, $sumText, (New-Object System.Text.ASCIIEncoding))
 # verify what was written: every listed file exists with exactly that hash, and nothing else is listed
 $listed = @(Get-Content $sumFile)
 if ($listed.Count -ne $artifacts.Count) { throw "SHA256SUMS-windows lists $($listed.Count) files, expected $($artifacts.Count)" }

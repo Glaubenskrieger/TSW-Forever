@@ -5,6 +5,7 @@
 //! NOT implemented (see documentation/architecture.md): patching/updating, authentication
 //! (`-loginkey`/`-statindex` come from outside and are only passed through), prefix creation, compatibility fixes.
 
+pub mod channel;
 pub mod config;
 pub mod diag;
 pub mod diaglog;
@@ -26,12 +27,14 @@ pub mod prefix;
 pub mod prefs;
 pub mod progress;
 pub mod project;
+pub mod releasenotice;
 pub mod runner;
 pub mod runtimedl;
 pub mod secrets;
 pub mod selfupdate;
 pub mod sha256;
 pub mod shadercache;
+pub mod update;
 pub mod windowing;
 pub mod winnative;
 

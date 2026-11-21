@@ -67,7 +67,7 @@ class RealProject(unittest.TestCase):
         self.assertIn(f'release version="{out}"', read(v.METAINFO))
 
     def test_workflows_check_and_use_the_version(self):
-        for wf in ("flatpak.yml", "release-flatpak.yml"):
+        for wf in ("flatpak.yml", "flatpak-stable-build.yml"):
             text = read(f".github/workflows/{wf}")
             self.assertIn("scripts/version.py check", text, wf)
             self.assertIn("scripts/version.py show", text, wf)

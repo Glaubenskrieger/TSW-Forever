@@ -1,13 +1,18 @@
 # Native Windows build of the launcher (tsw-launcher.exe, tsw-launch.exe): formatting, Clippy -D warnings, the Rust test suites, the unsigned
-# x64 Inno Setup installer, a silent install/uninstall test of that installer, and SHA-256 sums - all on a real GitHub-hosted Windows runner.
-# Build and test workflow. Started by hand (workflow_dispatch, no inputs) or called by release-set.yml. Main or a v<version> tag on main only (job guard plus ancestor check),
-# read-only token, no secrets, no signing. It creates no tag, no release, no commit and publishes nothing: the result is a workflow artifact (the release workflow publishes it).
+# per-user Inno Setup installer, a silent install/uninstall test of that installer, and SHA-256 sums - all on a real GitHub-hosted Windows runner.
+# PRIVATE DEVELOPMENT WORKFLOW. Started by hand (workflow_dispatch, no inputs) or called by release-set.yml. Main or a v<version> tag on main only (job guard plus ancestor check),
+# read-only token, no secrets, no signing. It creates no tag, no release, no commit and publishes nothing: the result is a workflow artifact for internal tests.
 # Every failing step fails the run (no continue-on-error). All build logic lives in scripts/build_windows_installer.ps1 and scripts/test_windows_installer.ps1.
 name: windows
 
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      use_cache:
+        description: "Restore a development cache. Only ci.yml (a development check) passes true; the release workflows pass false explicitly; the default is false"
+        type: boolean
+        default: false
     outputs:
       artifact:
         description: "Name of the uploaded Windows artifact"
@@ -17,11 +22,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}
-  cancel-in-progress: true
+  group: windows-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   RUST_VERSION: "1.99.0"
+  # development builds only (Clippy and the test builds; the installer is built with --release): no incremental state, no debug info
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
   # Inno Setup is installed from Chocolatey only when the runner image does not carry it; the version is pinned (the package verifies its download checksum)
   INNO_SETUP_VERSION: "6.4.3"
 
@@ -37,7 +45,7 @@ jobs:
         shell: bash
     steps:
       - name: Check out the repository (read-only token, no stored credentials, full history for the main check)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -62,11 +70,31 @@ jobs:
         run: echo "artifact=tsw-forever-${{ steps.version.outputs.version }}-windows-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Install the pinned Rust toolchain with rustfmt and Clippy
+        id: rust
         run: |
           rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy --no-self-update
           rustup default "$RUST_VERSION"
           rustc --version
           cargo --version
+          echo "version=$(rustc --version | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+
+      # Development cache, ONLY when explicitly asked for: `use_cache: true` (passed by ci.yml, the manual full check) or a manual run of this workflow itself (`github.workflow` is
+      # `windows` and the event is workflow_dispatch). The release workflows pass `use_cache: false`, and the default is false: a release build is clean and never depends on a
+      # development cache. Key: system, exact compiler, lockfiles, cargo configuration and this workflow file; cargo rebuilds whatever differs.
+      - name: Restore the development cache (never in release builds)
+        if: ${{ inputs.use_cache == true || (github.event_name == 'workflow_dispatch' && github.workflow == 'windows') }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            patcher/target
+            launcher/target
+            launcher-gui/target
+          key: windows-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('patcher/Cargo.lock', 'launcher/Cargo.lock', 'launcher-gui/Cargo.lock', '.cargo/config.toml', '.github/workflows/windows.yml') }}
+          restore-keys: |
+            windows-${{ runner.os }}-${{ steps.rust.outputs.version }}-
 
       - name: Formatting
         run: |
@@ -115,7 +143,7 @@ jobs:
           test "$(ls stage | wc -l)" = 4
 
       - name: Upload the Windows artifacts (unsigned, internal tests only)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.names.outputs.artifact }}
           path: |

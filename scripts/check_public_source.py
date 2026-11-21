@@ -44,6 +44,8 @@ def check(path):
                 errors.append(f'private/unapproved source root: {rel}')
             if any(p in prepublish.FORBIDDEN_DIRS for p in parts[1:]):
                 errors.append(f'private source directory: {rel}')
+            if rel.startswith('packaging/channels/') and rel != 'packaging/channels/stable.conf':
+                errors.append(f'the testing channel definition must never be public: {rel}')
             if not member.isfile():
                 continue
             if parts[1] == 'documentation' and '/'.join(parts[2:]) not in DOCS:

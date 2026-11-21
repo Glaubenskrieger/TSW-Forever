@@ -76,9 +76,6 @@ msgstr "Virtueller Wine-Desktop (Kompatibilitätsmodus)"
 msgid "CHECKS"
 msgstr "PRÜFUNGEN"
 
-msgid "PATCHER"
-msgstr "PATCHER"
-
 msgid "Check again"
 msgstr "Erneut prüfen"
 
@@ -183,12 +180,6 @@ msgstr "Der Start ist fehlgeschlagen: {0}"
 
 msgid "Starting failed (exit code {0})."
 msgstr "Der Start ist fehlgeschlagen (Exit-Code {0})."
-
-msgid "Patcher: the client patch system is built in but stays switched off until the project signing key exists. No client patch is checked or installed. “Play” relies on the local checks only."
-msgstr "Patcher: Das Client-Patchsystem ist eingebaut, bleibt aber ausgeschaltet, bis der Signaturschlüssel des Projekts existiert. Es wird kein Client-Patch geprüft oder installiert. „Spielen“ beruht nur auf den lokalen Prüfungen."
-
-msgid "TSW-Forever {0} · patch engine {1} · patch manifest format {2}"
-msgstr "TSW-Forever {0} · Patch-Engine {1} · Manifestformat {2}"
 
 msgid "Several runtimes were found; {0} is used."
 msgstr "Mehrere Laufzeiten gefunden, verwendet wird {0}."
@@ -722,6 +713,9 @@ msgstr "Original-Patcher starten"
 msgid "The original patcher was started. It downloads the game data and continues after an interruption."
 msgstr "Der Original-Patcher wurde gestartet. Er lädt die Spieldaten und setzt nach einer Unterbrechung fort."
 
+msgid "The original patcher is already running."
+msgstr "Der Original-Patcher läuft bereits."
+
 msgid "The patcher fetches and completes the game data and continues after an interruption."
 msgstr "Der Patcher lädt und ergänzt die Spieldaten und setzt nach einer Unterbrechung fort."
 
@@ -955,3 +949,106 @@ msgstr "Die vorhandene Installation wird vom Launcher jetzt ignoriert (dort wurd
 
 msgid "The ignored installation is visible to the launcher again."
 msgstr "Die ignorierte Installation ist für den Launcher wieder sichtbar."
+
+msgid "A new version of the launcher is available."
+msgstr "Eine neue Version des Launchers ist verfügbar."
+
+msgid "Close launcher"
+msgstr "Launcher schließen"
+
+msgid "Flatpak found nothing to install. The update source may be unreachable, or the update was not allowed."
+msgstr "Flatpak hat nichts zu installieren gefunden. Die Update-Quelle ist möglicherweise nicht erreichbar, oder das Update wurde nicht erlaubt."
+
+msgid "Flatpak installs it in the background. Your settings and the game stay as they are. Your system may ask you once to allow the update."
+msgstr "Flatpak installiert sie im Hintergrund. Ihre Einstellungen und das Spiel bleiben unverändert. Ihr System fragt möglicherweise einmalig, ob das Update erlaubt ist."
+
+msgid "Installing the launcher update … {0} %"
+msgstr "Launcher-Update wird installiert … {0} %"
+
+msgid "Later"
+msgstr "Später"
+
+msgid "The launcher update is installed. Close the launcher and start it again to use the new version."
+msgstr "Das Launcher-Update ist installiert. Schließen Sie den Launcher und starten Sie ihn neu, um die neue Version zu verwenden."
+
+msgid "The update could not be installed: {0}"
+msgstr "Das Update konnte nicht installiert werden: {0}"
+
+msgid "The update source could not be reached. The launcher works as before; try again later."
+msgstr "Die Update-Quelle war nicht erreichbar. Der Launcher funktioniert wie bisher; versuchen Sie es später erneut."
+
+msgid "The update was not allowed. Allow it when your system asks, or update another way."
+msgstr "Das Update wurde nicht erlaubt. Erlauben Sie es, wenn Ihr System danach fragt, oder aktualisieren Sie auf anderem Weg."
+
+msgid "This is a system-wide installation, so updating may ask for your administrator password. Use your software center or run: flatpak update {0}"
+msgstr "Dies ist eine systemweite Installation, daher kann das Update nach Ihrem Administratorpasswort fragen. Nutzen Sie Ihr Software-Center oder führen Sie aus: flatpak update {0}"
+
+msgid "Try again"
+msgstr "Erneut versuchen"
+
+msgid "Update launcher"
+msgstr "Launcher aktualisieren"
+
+msgid "You can also update with your software center, or run: flatpak update {0}"
+msgstr "Sie können auch über Ihr Software-Center aktualisieren oder ausführen: flatpak update {0}"
+
+msgid "It is downloaded and checked first. Then Windows asks for your permission once, and the launcher starts again by itself. Your settings and the game stay as they are."
+msgstr "Es wird zuerst heruntergeladen und geprüft. Danach fragt Windows einmal nach Ihrer Erlaubnis, und der Launcher startet von selbst neu. Ihre Einstellungen und das Spiel bleiben unverändert."
+
+msgid "Downloading the launcher update …"
+msgstr "Launcher-Update wird heruntergeladen …"
+
+msgid "Checking the downloaded update …"
+msgstr "Heruntergeladenes Update wird geprüft …"
+
+msgid "Installing the update. Allow the Windows dialog; the launcher closes and starts again by itself."
+msgstr "Das Update wird installiert. Erlauben Sie den Windows-Dialog; der Launcher schließt sich und startet von selbst neu."
+
+msgid "The update could not be downloaded. The launcher works as before; try again later."
+msgstr "Das Update konnte nicht heruntergeladen werden. Der Launcher funktioniert wie bisher; versuchen Sie es später erneut."
+
+msgid "The downloaded update did not match its signed checksum and was deleted. Nothing was installed."
+msgstr "Das heruntergeladene Update stimmte nicht mit der signierten Prüfsumme überein und wurde gelöscht. Es wurde nichts installiert."
+
+msgid "Try again later; if it keeps failing, download the installer from the release page and check it there."
+msgstr "Versuchen Sie es später erneut; falls es weiter fehlschlägt, laden Sie den Installer von der Release-Seite herunter und prüfen Sie ihn dort."
+
+msgid "The update could not be prepared: {0}"
+msgstr "Das Update konnte nicht vorbereitet werden: {0}"
+
+msgid "The installation was cancelled. If you declined Windows' permission dialog, nothing was changed."
+msgstr "Die Installation wurde abgebrochen. Falls Sie den Berechtigungsdialog von Windows abgelehnt haben, wurde nichts geändert."
+
+msgid "The installer could not be started: {0}"
+msgstr "Der Installer konnte nicht gestartet werden: {0}"
+
+msgid "The launcher works as before. Try again later, or download the installer from the release page."
+msgstr "Der Launcher arbeitet wie bisher. Versuchen Sie es später erneut oder laden Sie den Installer von der Release-Seite herunter."
+
+msgid "The installer stopped with the error code {0}. The launcher may not have been updated."
+msgstr "Der Installer wurde mit dem Fehlercode {0} beendet. Der Launcher wurde möglicherweise nicht aktualisiert."
+
+msgid "The launcher works as before. Try again, or restore the previous version."
+msgstr "Der Launcher arbeitet wie bisher. Versuchen Sie es erneut oder stellen Sie die vorherige Version wieder her."
+
+msgid "The result of the installer could not be read: {0}"
+msgstr "Das Ergebnis des Installers konnte nicht gelesen werden: {0}"
+
+msgid "Press the button to try again and allow the Windows dialog."
+msgstr "Drücken Sie die Schaltfläche, um es erneut zu versuchen, und erlauben Sie den Windows-Dialog."
+
+msgid "Restore previous version"
+msgstr "Vorherige Version wiederherstellen"
+
+msgid "A new version of TSW-Forever ({0}) is available."
+msgstr "Eine neue Version von TSW-Forever ({0}) ist verfügbar."
+
+msgid "Open download page"
+msgstr "Downloadseite öffnen"
+
+msgid "The release page could not be opened. Open {0} in your browser."
+msgstr "Die Release-Seite konnte nicht geöffnet werden. Öffnen Sie {0} in Ihrem Browser."
+
+
+msgid "TSW-Forever {0}"
+msgstr "TSW-Forever {0}"

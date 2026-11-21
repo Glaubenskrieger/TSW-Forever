@@ -77,6 +77,19 @@ impl Capabilities {
 
 // ---- locations ----------------------------------------------------------------------------------------------------------
 
+/// The marker file the Windows installer writes into [`data_dir`] while it replaces the program files (`installer-closing`; see `packaging/windows/tsw-forever.iss`). While
+/// it is FRESH the installer is about to ask the running launcher to close (Inno Setup's CloseApplications), and the window accepts that request without its own
+/// "really quit?" question; without it the question would block the update. The game is a separate process and is not touched by closing the launcher.
+pub const INSTALLER_MARKER: &str = "installer-closing";
+/// How long the marker counts: a marker left behind by an installer that was cancelled or crashed stops mattering after this.
+pub const INSTALLER_MARKER_FRESH_SECS: u64 = 10 * 60;
+
+/// Is the installer marker in `data_dir` fresh at `now`? A missing file, an unreadable time, a time in the future (clock set back) or an old file all mean "no".
+pub fn installer_wants_close(data_dir: &Path, now: std::time::SystemTime) -> bool {
+    let Ok(modified) = std::fs::metadata(data_dir.join(INSTALLER_MARKER)).and_then(|m| m.modified()) else { return false };
+    now.duration_since(modified).map(|age| age.as_secs() <= INSTALLER_MARKER_FRESH_SECS).unwrap_or(false)
+}
+
 /// `%LOCALAPPDATA%\tsw-forever`: the launcher's per-user data (downloaded installer, caches, logs). Nothing here needs administrator rights.
 pub fn data_dir(env: Env) -> Option<PathBuf> {
     env("LOCALAPPDATA").map(|d| PathBuf::from(d).join(APP_DIR))
@@ -605,6 +618,11 @@ pub fn start_command(program: &Path, dir: &Path) -> Command {
     }
 }
 
+/// An argument for a program the launcher starts with fixed arguments (the update installer): letters, digits and `/ - _ . = :` only (no space, quote or shell character), so it needs no quoting.
+pub fn is_plain_argument(a: &str) -> bool {
+    !a.is_empty() && a.len() <= 64 && a.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'=' | b':'))
+}
+
 #[cfg(windows)]
 fn raw(c: &mut Command, line: &str) {
     use std::os::windows::process::CommandExt;
@@ -798,6 +816,22 @@ pub(crate) static SEARCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn the_installer_marker_counts_only_while_it_is_fresh() {
+        let dir = std::env::temp_dir().join(format!("tsw-marker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!installer_wants_close(&dir, SystemTime::now()), "no marker: the window asks as before");
+        std::fs::write(dir.join(INSTALLER_MARKER), "installer").unwrap();
+        let now = SystemTime::now(); // after the file was written: its modification time is not later than this
+        assert!(installer_wants_close(&dir, now), "a fresh marker: the installer is closing the launcher");
+        assert!(installer_wants_close(&dir, now + Duration::from_secs(INSTALLER_MARKER_FRESH_SECS)), "still fresh at the limit");
+        assert!(!installer_wants_close(&dir, now + Duration::from_secs(INSTALLER_MARKER_FRESH_SECS + 60)), "an old marker of a cancelled installer does not count");
+        assert!(!installer_wants_close(&dir, now - Duration::from_secs(3600)), "a marker from the future (clock set back) does not count");
+        assert!(!installer_wants_close(&dir.join("missing"), now), "a missing folder is no");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn env_of(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
@@ -1004,6 +1038,16 @@ mod tests {
         }
         for ok in ["C:\\Users\\Anna\\AppData\\Local\\TSW-Forever", "D:\\Games\\TSW-Forever", "C:\\Program Filesystem\\x", "C:\\WindowsGames\\x"] {
             assert!(forbidden_base(Path::new(ok), &env).is_none(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn installer_arguments_are_plain_or_refused() {
+        for bad in ["", "/SILENT \"&calc", "a b", "/X;y", "%PATH%", "^", "a|b", "a&b", "a>b", "\"", "x\ny", "\u{e4}", &"a".repeat(65)] {
+            assert!(!is_plain_argument(bad), "{bad:?}");
+        }
+        for ok in ["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/RELAUNCH=1", "/LOG", "-x", "a_b.c:d"] {
+            assert!(is_plain_argument(ok), "{ok}");
         }
     }
 

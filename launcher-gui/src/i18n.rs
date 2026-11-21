@@ -15,7 +15,14 @@
 use std::collections::HashMap;
 
 /// `(code, name of the language in that language, .po text)`. English is the source language and has no catalog.
-pub const LANGUAGES: &[(&str, &str, &str)] = &[("en", "English", ""), ("de", "Deutsch", include_str!("../translations/de/LC_MESSAGES/tsw-launcher-gui.po"))];
+pub const LANGUAGES: &[(&str, &str, &str)] = &[
+    ("en", "English", ""),
+    ("de", "Deutsch", include_str!("../translations/de/LC_MESSAGES/tsw-launcher-gui.po")),
+    ("fr", "Français", include_str!("../translations/fr/LC_MESSAGES/tsw-launcher-gui.po")),
+    ("es", "Español", include_str!("../translations/es/LC_MESSAGES/tsw-launcher-gui.po")),
+    ("pt-BR", "Português (Brasil)", include_str!("../translations/pt-BR/LC_MESSAGES/tsw-launcher-gui.po")),
+    ("pl", "Polski", include_str!("../translations/pl/LC_MESSAGES/tsw-launcher-gui.po")),
+];
 
 /// The source language, used whenever a translation is missing.
 pub const FALLBACK: &str = "en";
@@ -188,21 +195,25 @@ impl Catalog {
         self.code == FALLBACK || self.table.contains_key(id)
     }
 
-    /// Decimal number with the language's separator: `41,2` (de) or `41.2` (en).
+    /// Decimal number with the language's separator: `41,2` (de, fr, es, pt-BR, pl) or `41.2` (en).
     pub fn decimal(&self, value: f64) -> String {
         let s = format!("{value:.1}");
-        if self.code == "de" {
+        if self.decimal_comma() {
             s.replace('.', ",")
         } else {
             s
         }
     }
-    /// `63 %` (de) or `63%` (en).
+    /// Every language of the catalogue except English writes the decimal comma.
+    fn decimal_comma(&self) -> bool {
+        self.code != FALLBACK
+    }
+    /// `63 %` (de), `63 %` with a no-break space (fr, es) or `63%` (en, pt-BR, pl).
     pub fn percent(&self, p: u32) -> String {
-        if self.code == "de" {
-            format!("{p} %")
-        } else {
-            format!("{p}%")
+        match self.code {
+            "de" => format!("{p} %"),
+            "fr" | "es" => format!("{p}\u{a0}%"),
+            _ => format!("{p}%"),
         }
     }
     /// Decimal units: `41,2 MB`.
@@ -268,13 +279,23 @@ fn windows_display_language() -> Option<String> {
     (n > 1).then(|| String::from_utf16_lossy(&buf[..(n as usize - 1)]))
 }
 
-/// `de_DE.UTF-8` / `de-AT` / `de` → `de`, if that language is available.
+/// `de_DE.UTF-8` / `de-AT` / `de` → `de`, `pt_BR` / `pt-BR` / `pt` / `pt-PT` → `pt-BR`, if that language is available.
+/// An exact match of the whole tag (language and region, case-insensitive) wins; otherwise the language part selects the first catalogue of that language.
 fn supported(tag: &str) -> Option<&'static str> {
-    let lang = tag.split(['.', '@']).next().unwrap_or("").split(['_', '-']).next().unwrap_or("").to_ascii_lowercase();
-    LANGUAGES.iter().find(|(c, _, _)| *c == lang).map(|(c, _, _)| *c)
+    let tag = tag.split(['.', '@']).next().unwrap_or("").replace('_', "-").to_ascii_lowercase();
+    if tag.is_empty() {
+        return None;
+    }
+    if let Some((c, _, _)) = LANGUAGES.iter().find(|(c, _, _)| c.to_ascii_lowercase() == tag) {
+        return Some(c);
+    }
+    let lang = tag.split('-').next().unwrap_or("");
+    LANGUAGES.iter().find(|(c, _, _)| c.to_ascii_lowercase().split('-').next() == Some(lang)).map(|(c, _, _)| *c)
 }
 
-/// The first supported language of `LC_ALL`, `LC_MESSAGES`, `LANGUAGE` (colon list) and `LANG`, in that order.
+/// The language of the locale variables `LC_ALL`, `LC_MESSAGES`, `LANGUAGE` (colon list) and `LANG`, in that order. The first variable that is set decides:
+/// `C`/`POSIX` means English; `LC_ALL` and `LC_MESSAGES` name one locale, so an unavailable language there means English (the way `LC_ALL` overrides `LANG`, it never
+/// falls through to `LANG`); the `LANGUAGE` list is a list of preferences, so its first available entry wins and, if none is available, `LANG` is asked next.
 pub fn from_locale(env: &dyn Fn(&str) -> Option<String>) -> &'static str {
     for var in ["LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"] {
         let Some(value) = env(var).filter(|v| !v.is_empty()) else {
@@ -287,6 +308,9 @@ pub fn from_locale(env: &dyn Fn(&str) -> Option<String>) -> &'static str {
             if let Some(code) = supported(tag) {
                 return code;
             }
+        }
+        if var != "LANGUAGE" {
+            return FALLBACK;
         }
     }
     FALLBACK
@@ -326,9 +350,9 @@ mod tests {
     fn the_system_locale_selects_the_language_with_a_defined_order_and_fallback() {
         assert_eq!(from_locale(&env(&[("LANG", "de_DE.UTF-8")])), "de");
         assert_eq!(from_locale(&env(&[("LANG", "en_US.UTF-8")])), "en");
-        assert_eq!(from_locale(&env(&[("LANG", "fr_FR.UTF-8")])), "en", "unsupported language → English");
+        assert_eq!(from_locale(&env(&[("LANG", "ja_JP.UTF-8")])), "en", "unsupported language → English");
         assert_eq!(from_locale(&env(&[("LANG", "de_DE.UTF-8"), ("LC_ALL", "en_GB.UTF-8")])), "en", "LC_ALL wins over LANG");
-        assert_eq!(from_locale(&env(&[("LANGUAGE", "fr:de:en")])), "de", "first supported entry of the LANGUAGE list");
+        assert_eq!(from_locale(&env(&[("LANGUAGE", "ja:de:en")])), "de", "first supported entry of the LANGUAGE list");
         assert_eq!(from_locale(&env(&[("LC_ALL", "C"), ("LANG", "de_DE.UTF-8")])), "en", "the C locale means no translation");
         assert_eq!(from_locale(&env(&[])), "en");
         assert_eq!(from_locale(&env(&[("LANG", "de_AT@euro")])), "de");
@@ -336,7 +360,23 @@ mod tests {
 
     #[test]
     fn windows_locale_names_select_the_language_with_english_as_the_fallback() {
-        for (tag, lang) in [("de-DE", "de"), ("de-AT", "de"), ("de-CH", "de"), ("en-US", "en"), ("en-GB", "en"), ("fr-FR", ""), ("ja-JP", ""), ("pt-BR", "")] {
+        for (tag, lang) in [
+            ("de-DE", "de"),
+            ("de-AT", "de"),
+            ("de-CH", "de"),
+            ("en-US", "en"),
+            ("en-GB", "en"),
+            ("fr-FR", "fr"),
+            ("fr-CA", "fr"),
+            ("es-ES", "es"),
+            ("es-MX", "es"),
+            ("pt-BR", "pt-BR"),
+            ("pt-PT", "pt-BR"),
+            ("pl-PL", "pl"),
+            ("ja-JP", ""),
+            ("zh-Hans-CN", ""),
+            ("ru-RU", ""),
+        ] {
             assert_eq!(supported(tag).unwrap_or(FALLBACK), if lang.is_empty() { "en" } else { lang }, "{tag}");
         }
     }
@@ -356,7 +396,7 @@ mod tests {
         assert_eq!(resolve(Some("auto"), &de), "de");
         assert_eq!(resolve(Some("en"), &de), "en");
         assert_eq!(resolve(Some("de-AT"), &env(&[])), "de");
-        assert_eq!(resolve(Some("fr"), &de), "en", "an explicit but unavailable language falls back to English, not to the locale");
+        assert_eq!(resolve(Some("ja"), &de), "en", "an explicit but unavailable language falls back to English, not to the locale");
         assert_eq!(resolve(Some(""), &de), "de");
     }
 
@@ -377,6 +417,15 @@ mod tests {
         assert_eq!(en.bytes(41_200_000), "41.2 MB");
         assert_eq!(de.bytes(512), "512 B");
         assert_eq!((de.percent(63), en.percent(63)), ("63 %".to_string(), "63%".to_string()));
+        // the other languages: decimal comma everywhere except English; the percent sign follows each language's custom
+        let (fr, es, pt, pl) = (Catalog::new("fr"), Catalog::new("es"), Catalog::new("pt-BR"), Catalog::new("pl"));
+        for c in [&fr, &es, &pt, &pl] {
+            assert_eq!(c.bytes(41_200_000), "41,2 MB", "{}", c.code());
+            assert_eq!(c.bytes(512), "512 B", "{}", c.code());
+            assert_eq!(c.duration(65), "1 min 5 s", "{}", c.code());
+        }
+        assert_eq!((fr.percent(63), es.percent(63)), ("63\u{a0}%".to_string(), "63\u{a0}%".to_string()));
+        assert_eq!((pt.percent(63), pl.percent(63)), ("63%".to_string(), "63%".to_string()));
         assert_eq!(de.duration(65), "1 min 5 s");
         assert_eq!(en.duration(3), "3 s");
         assert_eq!(en.duration(7440), "2 h 4 min");
@@ -390,6 +439,164 @@ mod tests {
                 assert!(parse_po(po).len() > 20, "{code}: catalog is empty or unparsable");
             }
         }
+    }
+
+    #[test]
+    fn the_six_languages_are_registered_in_the_agreed_order_with_their_own_names() {
+        let codes: Vec<&str> = LANGUAGES.iter().map(|(c, _, _)| *c).collect();
+        assert_eq!(codes, ["en", "de", "fr", "es", "pt-BR", "pl"]);
+        let names: Vec<&str> = LANGUAGES.iter().map(|(_, n, _)| *n).collect();
+        assert_eq!(names, ["English", "Deutsch", "Français", "Español", "Português (Brasil)", "Polski"]);
+        // the directory of every catalogue is the language code (the window's bundled translations are found by it)
+        for (code, _, _) in LANGUAGES.iter().filter(|(c, _, _)| *c != FALLBACK) {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("translations").join(code).join("LC_MESSAGES").join("tsw-launcher-gui.po");
+            assert!(path.is_file(), "{}", path.display());
+        }
+    }
+
+    #[test]
+    fn locale_variables_select_each_of_the_six_languages_and_unknown_locales_give_english() {
+        let cases = [
+            ("de_DE.UTF-8", "de"),
+            ("de_AT@euro", "de"),
+            ("fr_FR.UTF-8", "fr"),
+            ("fr_CA.UTF-8", "fr"),
+            ("fr_CH", "fr"),
+            ("es_ES.UTF-8", "es"),
+            ("es_MX.UTF-8", "es"),
+            ("es_AR", "es"),
+            ("pt_BR.UTF-8", "pt-BR"),
+            ("pt_BR", "pt-BR"),
+            ("PT_br.utf8", "pt-BR"),
+            ("pt_PT.UTF-8", "pt-BR"),
+            ("pt", "pt-BR"),
+            ("pl_PL.UTF-8", "pl"),
+            ("pl", "pl"),
+            ("en_US.UTF-8", "en"),
+            ("en_GB", "en"),
+            // not available: English
+            ("ja_JP.UTF-8", "en"),
+            ("zh_CN.UTF-8", "en"),
+            ("ru_RU.UTF-8", "en"),
+            ("tr_TR.UTF-8", "en"),
+            ("it_IT.UTF-8", "en"),
+            ("nl_NL", "en"),
+            ("C", "en"),
+            ("C.UTF-8", "en"),
+            ("POSIX", "en"),
+            ("xx_YY", "en"),
+            ("", "en"),
+            ("pt_", "pt-BR"),
+            ("_BR", "en"),
+            ("p", "en"),
+            ("plx", "en"),
+        ];
+        for (value, want) in cases {
+            assert_eq!(from_locale(&env(&[("LANG", value)])), want, "LANG={value:?}");
+        }
+        // the order of the variables and the colon list work with the new languages too
+        assert_eq!(from_locale(&env(&[("LANGUAGE", "ja:pl:de"), ("LANG", "fr_FR.UTF-8")])), "pl");
+        assert_eq!(from_locale(&env(&[("LANGUAGE", "ja:ko"), ("LANG", "fr_FR.UTF-8")])), "fr", "no listed language is available: the next variable decides");
+        assert_eq!(from_locale(&env(&[("LC_ALL", "es_ES.UTF-8"), ("LANGUAGE", "pl"), ("LANG", "de_DE")])), "es");
+        assert_eq!(from_locale(&env(&[("LC_ALL", "C"), ("LANG", "pl_PL.UTF-8")])), "en", "an explicit C locale means English");
+        // an explicit locale in LC_ALL or LC_MESSAGES that is not available means English: it overrides LANG and never falls through to it
+        assert_eq!(from_locale(&env(&[("LC_ALL", "ja_JP.UTF-8"), ("LANG", "de_DE.UTF-8")])), "en");
+        assert_eq!(from_locale(&env(&[("LC_MESSAGES", "ru_RU.UTF-8"), ("LANG", "fr_FR.UTF-8")])), "en");
+        assert_eq!(from_locale(&env(&[("LC_ALL", "ja_JP.UTF-8"), ("LANGUAGE", "pl")])), "en", "LC_ALL decides before LANGUAGE is looked at");
+        assert_eq!(from_locale(&env(&[("LANGUAGE", "ja"), ("LANG", "de_DE.UTF-8")])), "de", "an unavailable LANGUAGE list asks LANG next");
+        assert_eq!(from_locale(&env(&[("LANG", "ja_JP.UTF-8")])), "en");
+        assert_eq!(from_locale(&env(&[])), "en");
+    }
+
+    #[test]
+    fn an_explicit_setting_accepts_every_spelling_of_the_codes_and_an_unknown_one_gives_english() {
+        let nothing = env(&[]);
+        for (setting, want) in [
+            ("fr", "fr"),
+            ("FR", "fr"),
+            ("fr-FR", "fr"),
+            ("es", "es"),
+            ("es_MX", "es"),
+            ("pt-BR", "pt-BR"),
+            ("pt_BR", "pt-BR"),
+            ("pt-br", "pt-BR"),
+            ("pt", "pt-BR"),
+            ("pl", "pl"),
+            ("pl-PL", "pl"),
+            ("de", "de"),
+            ("en", "en"),
+            ("ja", "en"),
+            ("klingon", "en"),
+            ("../etc", "en"),
+        ] {
+            assert_eq!(resolve(Some(setting), &nothing), want, "language = {setting}");
+        }
+        let fr = env(&[("LANG", "fr_FR.UTF-8")]);
+        assert_eq!(resolve(Some("auto"), &fr), "fr");
+        assert_eq!(resolve(Some("pl"), &fr), "pl", "an explicit setting beats the system language");
+        assert_eq!(resolve(Some("ja"), &fr), "en", "an explicit unknown setting is English, not the system language");
+    }
+
+    #[test]
+    fn the_selector_codes_round_trip_for_all_languages() {
+        for (code, _, _) in LANGUAGES {
+            assert_eq!(resolve(Some(code), &env(&[])), *code);
+            assert_eq!(Catalog::new(code).code(), *code);
+        }
+        assert_eq!(Catalog::new("klingon").code(), "en");
+    }
+
+    // ---- quality of the catalogues: nothing empty, nothing broken, same shape as the source text ----
+
+    #[test]
+    fn every_translation_is_present_clean_and_shaped_like_its_source_text() {
+        let ids = all_message_ids();
+        for (code, _, po) in LANGUAGES.iter().filter(|(c, _, _)| *c != FALLBACK) {
+            let table = parse_po(po);
+            let mut identical = 0usize;
+            for (id, tr) in &table {
+                assert!(!tr.trim().is_empty(), "{code}: empty translation for {id:?}");
+                assert!(!tr.contains('\u{fffd}'), "{code}: broken character in {tr:?}");
+                assert!(!tr.contains('\t') && !tr.contains("  "), "{code}: stray white space in {tr:?}");
+                assert_eq!(id.starts_with(' '), tr.starts_with(' '), "{code}: leading space differs for {id:?}");
+                assert_eq!(id.ends_with(' '), tr.ends_with(' '), "{code}: trailing space differs for {id:?}");
+                assert_eq!(id.contains('\n'), tr.contains('\n'), "{code}: line breaks differ for {id:?}");
+                assert_eq!(id.matches('`').count(), tr.matches('`').count(), "{code}: command quotes (`…`) differ for {id:?}");
+                // commands and options in backticks stay exactly as they are
+                for part in id.split('`').skip(1).step_by(2) {
+                    assert!(tr.contains(&format!("`{part}`")) || part.contains('<'), "{code}: the command `{part}` must stay unchanged in {tr:?}");
+                }
+                for token in ["tsw-launch", "--exe", "--runner", "--prefix", "client_exe", "flatpak update", "SHA-256", "DXVK", "vkd3d", "gamescope", "download.microsoft.com"] {
+                    if id.to_lowercase().contains(token.to_lowercase().as_str()) {
+                        assert!(tr.to_lowercase().contains(token.to_lowercase().as_str()), "{code}: {token:?} must stay in {tr:?}");
+                    }
+                }
+                if tr == id {
+                    identical += 1;
+                }
+            }
+            assert_eq!(table.len(), ids.len(), "{code}: entry count");
+            // names, brand lines and technical terms are legitimately identical; a catalogue that is mostly English was copied, not translated
+            assert!(identical * 100 / ids.len() <= 12, "{code}: {identical} of {} texts are identical to English", ids.len());
+        }
+    }
+
+    #[test]
+    fn special_characters_survive_the_catalogue_and_rendering() {
+        let pl = Catalog::new("pl");
+        assert!(pl.tr("Cancel download").contains("Anuluj pobieranie") && pl.tr("Installing").contains("Instalowanie"));
+        assert_eq!(pl.tr("Language of the launcher"), "Język launchera");
+        assert_eq!(pl.render(&Msg::new("Saving failed: {0}", ["błąd ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ"])), "Zapis nie powiódł się: błąd ąćęłńóśźż ĄĆĘŁŃÓŚŹŻ");
+        assert_eq!(Catalog::new("fr").tr("Are you sure you want to exit the launcher?"), "Voulez-vous vraiment quitter le launcher\u{a0}?");
+        assert_eq!(Catalog::new("es").tr("Are you sure you want to exit the launcher?"), "¿Seguro que quieres salir del launcher?");
+        assert_eq!(Catalog::new("pt-BR").tr("PLAY"), "JOGAR");
+        assert_eq!(Catalog::new("fr").tr("PLAY"), "JOUER");
+        assert_eq!(Catalog::new("pl").tr("PLAY"), "GRAJ");
+        assert_eq!(Catalog::new("es").tr("PLAY"), "JUGAR");
+        // typographic quotes, accents, ellipsis and the no-break space of French are kept as written
+        assert!(Catalog::new("fr").tr("Only fill in if the automatic detection fails. Empty fields mean “automatic”.").contains("«\u{a0}automatique\u{a0}»"));
+        assert!(Catalog::new("pl").tr("Only fill in if the automatic detection fails. Empty fields mean “automatic”.").contains("„automatycznie”"));
+        assert!(Catalog::new("pl").tr("Getting ready …").ends_with(" …"));
     }
 
     // ---- completeness: every message id in the sources is translated in every language, and no entry is stale ----

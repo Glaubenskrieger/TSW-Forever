@@ -51,14 +51,58 @@ impl Drop for ResetUserSearch {
     }
 }
 
+/// The sandbox every window test runs in (Unix): a throw-away HOME and XDG folders, and a PATH that holds ONLY harmless stand-ins (`wine`, `xdg-open`, ... write one line to `calls.log` and exit).
+/// A simulated click on a button therefore cannot start a real Wine, the original patcher or any other program of the machine: there is no Wine runtime to find (the runtimes are looked up
+/// below HOME and the installation folder, never on the PATH), `~/Games/The Secret World` is a path inside the sandbox, and a program searched on the PATH is a stand-in. Set once per test
+/// process, before the first window exists. (On Windows the existing `TSW_LAUNCH_NO_SYSTEM_SEARCH` switch applies; no Wine exists there.)
+#[cfg(unix)]
+fn sandbox() -> &'static std::path::Path {
+    static SANDBOX: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    SANDBOX.get_or_init(|| {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("tsw-ui-sandbox-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (home, bin) = (root.join("home"), root.join("bin"));
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(home.join(".local/share")).unwrap();
+        for program in ["wine", "wine64", "wineserver", "xdg-open", "flatpak", "flatpak-spawn", "explorer.exe"] {
+            let path = bin.join(program);
+            std::fs::write(&path, format!("#!/bin/sh\necho \"{program} $*\" >> '{}'\nexit 0\n", root.join("calls.log").display())).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::env::set_var("HOME", &home);
+        std::env::set_var("XDG_DATA_HOME", home.join(".local/share"));
+        std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+        std::env::set_var("XDG_CACHE_HOME", home.join(".cache"));
+        std::env::set_var("XDG_STATE_HOME", home.join(".local/state"));
+        std::env::set_var("PATH", &bin);
+        // nothing of the developer's shell may name a configuration, a Wine, a prefix or a runtime: every TSW_LAUNCH_*, WINE* and PROTON* variable and the Steam ones go (TSW_LAUNCH_NO_SYSTEM_SEARCH only narrows the search and stays)
+        for (name, _) in std::env::vars_os().filter_map(|(k, v)| k.into_string().ok().map(|k| (k, v))) {
+            let doomed = (name.starts_with("TSW_LAUNCH_") && name != "TSW_LAUNCH_NO_SYSTEM_SEARCH")
+                || name.starts_with("WINE")
+                || name.starts_with("PROTON")
+                || name.starts_with("STEAM")
+                || name == "FLATPAK_ID";
+            if doomed {
+                std::env::remove_var(name);
+            }
+        }
+        root
+    })
+}
+
 fn fresh() -> MainWindow {
+    #[cfg(unix)]
+    sandbox();
     // a machine with a real game installation registered must not influence any window test
     #[cfg(windows)]
     std::env::set_var("TSW_LAUNCH_NO_SYSTEM_SEARCH", "1");
     let adapter = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     adapter.set_size(PhysicalSize::new(WIDTH, HEIGHT));
-    let _ = slint::platform::set_platform(Box::new(Headless(adapter.clone())));
-    SNAP_ADAPTER.with(|a| *a.borrow_mut() = Some(adapter.clone()));
+    // the platform can be set once per thread: a second window of the same test gets the FIRST adapter, so that is the one a snapshot has to draw
+    if slint::platform::set_platform(Box::new(Headless(adapter.clone()))).is_ok() {
+        SNAP_ADAPTER.with(|a| *a.borrow_mut() = Some(adapter.clone()));
+    }
     let ui = MainWindow::new().expect("window");
     ui.set_can_play(true);
     ui.show().expect("show");
@@ -85,10 +129,12 @@ fn wired(tag: &str) -> (MainWindow, Shared, Arc<AtomicBool>, std::path::PathBuf)
         watch_busy: false,
         funcom_children: Vec::new(),
         patcher_child: None,
+        button_patcher: None,
         close_attempted: false,
         run: Default::default(),
         run_active: false,
         run_ok: false,
+        update: Default::default(),
     }));
     crate::i18n::select_language("en");
     let may_close = Arc::new(AtomicBool::new(false));
@@ -399,13 +445,21 @@ fn switching_the_language_changes_window_and_program_texts_without_a_restart_and
 
 #[test]
 fn every_translated_window_text_is_really_used_by_the_compiled_window() {
-    // the Slint side: select German and read every @tr property back; a missing bundled translation would show English
+    // the Slint side: select each language and read the @tr properties back; a missing bundled translation (for example a wrong directory name) would show English
     let (ui, ..) = wired("lang2");
-    ui.invoke_language_selected(2);
-    assert_ne!(ui.get_exit_question().as_str(), "Are you sure you want to exit the launcher?", "bundled translations are active");
-    let de = Catalog::new("de");
-    assert_eq!(ui.get_exit_question().as_str(), de.tr("Are you sure you want to exit the launcher?"), "Slint's bundle equals the program's catalog");
-    assert_eq!(ui.get_play_label().as_str(), de.tr("PLAY"));
+    for (i, (code, _, _)) in crate::i18n::LANGUAGES.iter().enumerate().filter(|(_, (c, _, _))| *c != crate::i18n::FALLBACK) {
+        ui.invoke_language_selected(i as i32 + 1);
+        let cat = Catalog::new(code);
+        assert_ne!(ui.get_exit_question().as_str(), "Are you sure you want to exit the launcher?", "{code}: bundled translations are active");
+        assert_eq!(ui.get_exit_question().as_str(), cat.tr("Are you sure you want to exit the launcher?"), "{code}: Slint's bundle equals the program's catalog");
+        assert_eq!(ui.get_exit_yes().as_str(), cat.tr("Yes, exit"), "{code}");
+        assert_eq!(ui.get_exit_no().as_str(), cat.tr("No, go back"), "{code}");
+        assert_eq!(ui.get_play_label().as_str(), cat.tr("PLAY"), "{code}");
+        assert_eq!(ui.get_language_index(), i as i32 + 1, "{code}");
+        assert_eq!(ui.get_language_names().row_count(), crate::i18n::LANGUAGES.len() + 1);
+    }
+    ui.invoke_language_selected(1);
+    assert_eq!(ui.get_play_label().as_str(), "PLAY");
 }
 
 /// Not a regression test: with `TSW_GUI_SNAPSHOTS=<dir>` it renders the launcher's own window (software renderer, nothing of
@@ -445,6 +499,19 @@ fn render_snapshots_for_visual_review_when_asked() {
     dump(&ui, "normal-en");
     ui.invoke_language_selected(2);
     dump(&ui, "normal-de");
+    // the newer-version notice (Windows) at the bottom right, in both languages
+    {
+        let mut st = state.lock().unwrap();
+        st.update.notice = Some(tsw_launch::releasenotice::Notice { version: "0.3.0".into(), url: format!("{}/releases/tag/v0.3.0", tsw_launch::project::REPO_URL) });
+        crate::render(&ui, &st);
+    }
+    dump(&ui, "notice-de");
+    ui.invoke_language_selected(1);
+    dump(&ui, "notice-en");
+    state.lock().unwrap().update.notice = None;
+    crate::render(&ui, &state.lock().unwrap());
+    ui.invoke_language_selected(2);
+    dump(&ui, "normal-de-again");
     ui.set_confirm_exit(true);
     dump(&ui, "exit-dialog-de");
     ui.set_confirm_exit(false);
@@ -530,6 +597,37 @@ fn render_snapshots_for_visual_review_when_asked() {
             ui.invoke_language_selected(lang);
             dump(&ui, &format!("gate-{}-{name}", if waiting { "working" } else { "verify" }));
         }
+    }
+    // every language: the main view with the longest hint, the exit dialog and the top of the advanced view (text-fit review)
+    ui.set_advanced(false);
+    {
+        let mut st = state.lock().unwrap();
+        st.view.needs_install = true;
+        st.view.install_waiting = false;
+        st.view.install_label = Some(crate::i18n::Msg::plain("VERIFY INSTALLATION"));
+        st.view.install_hint = Some(crate::i18n::Msg::plain(
+            "The game data is not confirmed as complete yet. The original patcher checks it and repairs what is missing: start it with the button. Once it confirms that nothing is left to fetch, this window continues by itself and closes the patcher.",
+        ));
+        st.view.install_notice = Some(crate::i18n::Msg::plain(
+            "An earlier installation inside the Flatpak data folder was found. It is only reported and never used or changed; the game is installed in the folder above.",
+        ));
+    }
+    for (i, (code, _, _)) in crate::i18n::LANGUAGES.iter().enumerate() {
+        ui.set_advanced(false);
+        ui.invoke_language_selected(i as i32 + 1);
+        dump(&ui, &format!("all-main-{code}"));
+        ui.set_confirm_exit(true);
+        dump(&ui, &format!("all-exit-{code}"));
+        ui.set_confirm_exit(false);
+        ui.set_advanced(true);
+        dump(&ui, &format!("all-advanced-{code}"));
+        for step in 1..=3 {
+            ui.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(500.0, 550.0), delta_x: 0.0, delta_y: -560.0 });
+            dump(&ui, &format!("all-advanced-{code}-scroll{step}"));
+        }
+        ui.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(500.0, 550.0), delta_x: 0.0, delta_y: -3000.0 });
+        dump(&ui, &format!("all-advanced-{code}-bottom"));
+        ui.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(500.0, 550.0), delta_x: 0.0, delta_y: 6000.0 });
     }
 }
 
@@ -1121,4 +1219,798 @@ fn with_the_detection_paused_an_old_stored_path_is_not_taken_and_a_manual_choice
     }
     assert_eq!(std::fs::metadata(&exe).unwrap().modified().unwrap(), before, "the installation itself was never touched");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_launcher_update_block_shows_the_phase_and_the_buttons_follow_the_users_decision() {
+    use tsw_launch::update::flatpak::{Failure, Phase};
+    let (ui, state, mc, _p) = wired("update");
+    assert_eq!(ui.get_update_state(), 0, "nothing is shown by default (offline, no portal, no update source)");
+    let show = |p: Phase| {
+        let mut st = state.lock().unwrap();
+        st.update.phase = p;
+        st.update.dismissed = false; // a new situation is shown again
+        crate::render(&ui, &st);
+    };
+    show(Phase::Available);
+    assert_eq!((ui.get_update_state(), ui.get_update_button().as_str()), (1, "Update launcher"));
+    assert!(ui.get_update_text().contains("new version") && ui.get_update_detail().contains("Flatpak installs it in the background"));
+    // "Later" hides the offer
+    ui.invoke_update_dismiss();
+    assert_eq!(ui.get_update_state(), 0);
+    // an install in progress, in the user's language
+    show(Phase::Working(42));
+    assert_eq!(ui.get_update_state(), 2);
+    assert!(ui.get_update_text().contains("42 %"));
+    {
+        let mut st = state.lock().unwrap();
+        crate::apply_language(&ui, &mut st, "de");
+    }
+    assert!(ui.get_update_text().contains("Launcher-Update wird installiert"), "{}", ui.get_update_text());
+    {
+        let mut st = state.lock().unwrap();
+        crate::apply_language(&ui, &mut st, "en");
+    }
+    // failures and refusals can be retried; the retry without a portal ends as a clear failure, never as a crash
+    show(Phase::Failed(Failure::Network));
+    assert_eq!(ui.get_update_state(), 5);
+    ui.invoke_update_action();
+    assert_eq!(ui.get_update_state(), 5, "no portal handle in the test: the retry fails visibly");
+    // after the install the same button closes the launcher so that the new version starts next time
+    show(Phase::RestartNeeded);
+    assert_eq!((ui.get_update_state(), ui.get_update_button().as_str()), (3, "Close launcher"));
+    assert!(!mc.load(Ordering::SeqCst));
+    ui.invoke_update_action();
+    assert!(mc.load(Ordering::SeqCst) && !ui.window().is_visible(), "the launcher left");
+}
+
+#[test]
+fn the_release_notice_is_a_quiet_hint_whose_button_only_opens_the_release_page() {
+    let (ui, state, mc, _p) = wired("notice");
+    assert_eq!(ui.get_update_state(), 0, "nothing is shown by default (offline, not newer, not Windows)");
+    let page = format!("{}/releases/tag/v0.4.0", tsw_launch::project::REPO_URL);
+    {
+        let mut st = state.lock().unwrap();
+        st.update.notice = Some(tsw_launch::releasenotice::Notice { version: "0.4.0".into(), url: page.clone() });
+        crate::render(&ui, &st);
+    }
+    assert_eq!((ui.get_update_state(), ui.get_update_button().as_str()), (6, "Open download page"));
+    assert_eq!(ui.get_update_text().as_str(), "A new version of TSW-Forever (0.4.0) is available.");
+    assert_eq!(ui.get_update_detail().as_str(), "", "no long explanation");
+    assert_eq!(ui.get_update_secondary().as_str(), "", "no second button");
+    {
+        let mut st = state.lock().unwrap();
+        crate::apply_language(&ui, &mut st, "de");
+    }
+    assert_eq!(ui.get_update_text().as_str(), "Eine neue Version von TSW-Forever (0.4.0) ist verfügbar.");
+    assert_eq!(ui.get_update_button().as_str(), "Downloadseite öffnen");
+    {
+        let mut st = state.lock().unwrap();
+        crate::apply_language(&ui, &mut st, "en");
+    }
+    crate::OPENED_PAGES.lock().unwrap().clear();
+    ui.invoke_update_action();
+    assert_eq!(*crate::OPENED_PAGES.lock().unwrap(), [page], "the button opens exactly the official release page of that version");
+    assert!(!mc.load(Ordering::SeqCst) && ui.window().is_visible(), "nothing is installed and the launcher stays");
+    assert_eq!(ui.get_update_state(), 6, "the notice stays; there is no \"Later\" button and nothing else changes");
+    // the callback behind the removed "Later" button must not hide this notice either (the notice shows again at the next start anyway)
+    ui.invoke_update_dismiss();
+    assert_eq!(ui.get_update_state(), 6);
+}
+
+#[test]
+fn the_launcher_update_overlay_is_one_element_at_the_bottom_right_that_moves_nothing() {
+    // the window definition itself is the contract here: ONE overlay for every update state (Flatpak 1 to 5, Windows notice 6), placed from the bottom right edge on the top
+    // layer; the in-flow block of the main view is gone, so nothing can be pushed around by it
+    let src = include_str!("../ui/launcher.slint");
+    assert!(!src.contains("update-state != 0 && root.update-state != 6 : VerticalLayout"), "no update block in the column of the main view any more");
+    assert_eq!(src.matches("if root.update-state != 0 && !root.advanced : Rectangle {").count(), 1, "exactly one overlay");
+    let start = src.find("if root.update-state != 0 && !root.advanced : Rectangle {").unwrap();
+    let overlay = &src[start..start + src[start..].find("// ---- exit confirmation").unwrap()];
+    assert!(src[..start].rfind("// ---- launcher-update overlay").is_some(), "documented where it stands");
+    assert!(overlay.contains("x: parent.width - self.width - 14px;") && overlay.contains("y: parent.height - self.height - 14px;"), "anchored to the bottom right with a 14 px margin");
+    assert!(overlay.contains("width: min(max(340px, update-buttons.preferred-width + 20px), parent.width - 28px);"), "about 340 px, wider only for the buttons, never wider than the window");
+    assert!(overlay.contains("height: update-card.preferred-height;"), "its height follows its content, so it grows upwards from the bottom edge");
+    assert!(overlay.contains("height: min(update-texts.preferred-height, 190px);") && overlay.contains("ScrollView {"), "long texts scroll in a bounded area, the buttons stay outside of it");
+    assert!(overlay.contains("TouchArea { }"), "the card swallows pointer input over its own area");
+    // it shows what the update logic reports and offers the actions that logic already has (nothing new)
+    for kept in
+        ["root.update-text", "root.update-detail", "root.update-button", "root.update-secondary", "root.update-action()", "root.update-secondary-action()", "root.update-dismiss()", "@tr(\"Later\")"]
+    {
+        assert!(overlay.contains(kept), "still there: {kept}");
+    }
+    assert!(
+        overlay.contains("if root.update-state != 2 : NoticeButton {") && overlay.contains("root.update-state == 1 || root.update-state == 4 || root.update-state == 5 : NoticeButton {"),
+        "the same visibility rules as before: no button while installing, Later for offer, nothing to install and failure"
+    );
+    assert!(overlay.contains("if root.update-secondary != \"\" && root.update-state == 5 : NoticeButton {"), "the second action only after a failure");
+    assert!(!overlay.contains("update-state == 5 || root.update-state == 6") && !overlay.contains("update-state == 6"), "the notice (6) gets no Later button: that follows from the rules above");
+    assert!(overlay.matches("enabled: !root.confirm-exit;").count() == 3, "all three buttons are disabled while the exit dialog is open");
+    assert!(!overlay.contains("Btn {") && !overlay.contains("animate") && !overlay.contains("Image") && !overlay.contains("Path"), "no other button style, no animation, no symbol");
+    // the look: dark red frame, near-black surface, the project's light text colours
+    assert!(
+        overlay.contains("background: #120a0cf0;")
+            && overlay.contains("border-color: Theme.red-deep")
+            && overlay.contains("#f4ece2")
+            && overlay.contains("Theme.warn")
+            && overlay.contains("Theme.dim"),
+        "the existing colours only"
+    );
+    // the overlay stands above the view and below the exit dialog
+    assert!(src.find("// ---- exit confirmation").unwrap() > start, "the exit dialog stays above it");
+    // the buttons: the main one has the look of the big PLAY button and stays much smaller; the quiet one is the dark secondary look; no animation, no shadow
+    let nb_start = src.find("component NoticeButton inherits Rectangle {").expect("the component exists");
+    let nb = &src[nb_start..nb_start + src[nb_start..].find("// ---- quiet checkbox").unwrap()];
+    let pb_start = src.find("component PlayButton inherits Rectangle {").unwrap();
+    let pb = &src[pb_start..src.find("component NoticeButton").unwrap()];
+    for same in ["Theme.red 0%", "Theme.red-deep 100%", "Theme.hover-hi", "Theme.hover-lo", "Theme.red-hot", "Theme.hover-border", "#fbf3ea", "font-family: Theme.serif", "font-weight: 700"] {
+        assert!(nb.contains(same) && pb.contains(same), "the main overlay button shares `{same}` with the PLAY button");
+    }
+    assert!(
+        nb.contains("in property <bool> quiet: false;") && nb.contains("Theme.btn-base") && nb.contains("Theme.btn-hover") && nb.contains("Theme.btn-border"),
+        "the quiet variant uses the dark secondary colours"
+    );
+    assert!(!nb.contains("animate") && !nb.contains("drop-shadow"), "no animation");
+    assert!(nb.contains("height: 34px;") && pb.contains("height: 68px;"), "much smaller than the PLAY button");
+    assert!(nb.contains("min-width: label-text.preferred-width + 28px;"), "the width follows the lettering with padding on both sides");
+}
+
+#[test]
+fn an_address_outside_the_official_release_pages_is_never_opened() {
+    crate::OPENED_PAGES.lock().unwrap().clear();
+    let repo = tsw_launch::project::REPO_URL;
+    for bad in [
+        "https://evil.example/releases/tag/v1.0.0".to_string(),
+        "http://github.com/Glaubenskrieger/TSW-Forever/releases/tag/v1.0.0".to_string(),
+        format!("{repo}/releases/download/v1.0.0/setup.exe"),
+        format!("{repo}/releases/tag/v1.0.0 & calc"),
+        format!("{repo}/releases/tag/v1.0.0?x=1"),
+        format!("{repo}-evil/releases/tag/v1.0.0"),
+        "file:///c:/windows/system32/calc.exe".to_string(),
+    ] {
+        assert!(!crate::open_release_page(&bad), "{bad}");
+    }
+    assert!(crate::OPENED_PAGES.lock().unwrap().is_empty());
+}
+
+#[test]
+fn the_installed_version_sits_quietly_at_the_bottom_right_and_gives_way_to_update_notices() {
+    let (ui, state, _mc, _p) = wired("version");
+    let want = format!("TSW-Forever {}", env!("CARGO_PKG_VERSION"));
+    crate::render(&ui, &state.lock().unwrap());
+    assert_eq!(ui.get_version_info().as_str(), want, "the version this program was built with");
+    for lang in ["de", "en"] {
+        let mut st = state.lock().unwrap();
+        crate::apply_language(&ui, &mut st, lang);
+        assert_eq!(ui.get_version_info().as_str(), want, "{lang}: the same text in both languages, nothing else (no patch engine, no manifest format)");
+    }
+    // the window definition is the contract for placement and priority
+    let src = include_str!("../ui/launcher.slint");
+    let start = src.find("if !root.advanced && root.update-state == 0 : Text {").expect("the version element exists");
+    let el = &src[start..start + src[start..].find("// ---- launcher-update overlay").unwrap()];
+    assert!(el.contains("text: root.version-info;") && el.contains("x: parent.width - self.width - ") && el.contains("y: parent.height - self.height - "), "bottom right");
+    assert!(el.contains("Theme.fs-caption") && el.contains("Theme.faint"), "small and quiet");
+    assert!(!el.contains("TouchArea") && !el.contains("Btn") && !el.contains("animate"), "no control, no animation");
+    // a Flatpak banner (states 1 to 5) and the Windows notice card (6) have priority in the normal view
+    assert!(el.starts_with("if !root.advanced && root.update-state == 0"), "shown only without a notice");
+    assert!(src.contains("Text { text: root.version-info; color: Theme.faint; font-size: Theme.fs-caption; horizontal-alignment: right; }"), "the advanced view ends with the version line");
+    // the PATCHER card with its technical texts is gone from the window; nothing else was removed with it
+    assert!(!src.contains("@tr(\"PATCHER\")") && !src.contains("patch-status") && !src.contains("patch engine"), "no patcher card, no technical texts");
+    for kept in ["@tr(\"Start the original patcher\")", "root.update-text", "root.install-status", "root.status-text", "@tr(\"Check again\")"] {
+        assert!(src.contains(kept), "still there: {kept}");
+    }
+}
+
+// ---- the launcher-update overlay, rendered: geometry in every language and update state, scales, long texts, reachability --------------------------------------------------------
+// The method: render the window once without any update notice and once with it; the pixels that differ ARE the overlay. So "nothing moves" is checked on the pixels (a shifted control
+// would enlarge the changed area far beyond a 340 px card), and the card's position, size and margins are measured, not assumed.
+
+const LANGUAGES: [&str; 6] = ["en", "de", "fr", "es", "pt-BR", "pl"];
+
+fn long_error() -> String {
+    "the remote server answered with an error that no one has translated and that goes on and on, naming the object, the repository, the reference and the signature in detail; ".repeat(4)
+}
+
+/// The update situations of the overlay: (name, Flatpak phase or None for the Windows notice).
+fn overlay_cases() -> Vec<(&'static str, Option<tsw_launch::update::flatpak::Phase>)> {
+    use tsw_launch::update::flatpak::{Failure, Phase};
+    vec![
+        ("available", Some(Phase::Available)),
+        ("working", Some(Phase::Working(42))),
+        ("restart", Some(Phase::RestartNeeded)),
+        ("nothing", Some(Phase::NothingToInstall)),
+        ("not-allowed", Some(Phase::Failed(Failure::NotAllowed))),
+        ("network", Some(Phase::Failed(Failure::Network))),
+        ("failed-long", Some(Phase::Failed(Failure::Other(long_error())))),
+        ("notice", None),
+    ]
+}
+
+fn show_case(ui: &MainWindow, state: &Shared, case: &Option<tsw_launch::update::flatpak::Phase>) {
+    let mut st = state.lock().unwrap();
+    st.update.phase = tsw_launch::update::flatpak::Phase::Idle;
+    st.update.dismissed = false;
+    st.update.notice = None;
+    match case {
+        Some(p) => st.update.phase = p.clone(),
+        None => st.update.notice = Some(tsw_launch::releasenotice::Notice { version: "0.4.0".into(), url: format!("{}/releases/tag/v0.4.0", tsw_launch::project::REPO_URL) }),
+    }
+    crate::render(ui, &st);
+    ui.set_version_info(slint::SharedString::new()); // the quiet version line gives way to a notice; keep it out of the comparison
+}
+
+fn set_scale(ui: &MainWindow, scale: f32) {
+    ui.window().dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: scale });
+    let adapter = SNAP_ADAPTER.with(|a| a.borrow().clone()).expect("adapter");
+    adapter.set_size(PhysicalSize::new((WIDTH as f32 * scale).round() as u32, (HEIGHT as f32 * scale).round() as u32));
+}
+
+fn frame(ui: &MainWindow) -> (usize, Vec<slint::Rgb8Pixel>) {
+    let adapter = SNAP_ADAPTER.with(|a| a.borrow().clone()).expect("adapter");
+    let size = ui.window().size();
+    let w = size.width as usize;
+    let mut buf = vec![slint::Rgb8Pixel::default(); w * size.height as usize];
+    slint::platform::update_timers_and_animations();
+    ui.window().request_redraw();
+    assert!(adapter.draw_if_needed(|r| {
+        r.render(&mut buf, w);
+    }));
+    (w, buf)
+}
+
+/// The bounding box (x0, y0, x1, y1, inclusive, physical pixels) of the pixels that differ.
+fn changed_box(a: &[slint::Rgb8Pixel], b: &[slint::Rgb8Pixel], w: usize) -> Option<(usize, usize, usize, usize)> {
+    let mut bb: Option<(usize, usize, usize, usize)> = None;
+    for (i, (p, q)) in a.iter().zip(b).enumerate() {
+        if p != q {
+            let (x, y) = (i % w, i / w);
+            bb = Some(match bb {
+                None => (x, y, x, y),
+                Some((x0, y0, x1, y1)) => (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+            });
+        }
+    }
+    bb
+}
+
+/// The overlay of one case, in LOGICAL pixels: (left, top, right, bottom), measured as the area that changes when it appears.
+fn overlay_box(ui: &MainWindow, state: &Shared, case: &Option<tsw_launch::update::flatpak::Phase>, baseline: &(usize, Vec<slint::Rgb8Pixel>), scale: f32) -> (f32, f32, f32, f32) {
+    show_case(ui, state, case);
+    let (w, with) = frame(ui);
+    assert_eq!(w, baseline.0);
+    let (x0, y0, x1, y1) = changed_box(&baseline.1, &with, w).expect("the overlay is visible");
+    (x0 as f32 / scale, y0 as f32 / scale, (x1 + 1) as f32 / scale, (y1 + 1) as f32 / scale)
+}
+
+fn check_geometry(name: &str, (l, t, r, b): (f32, f32, f32, f32), normal_text: bool) {
+    let (w, h) = (r - l, b - t);
+    let (right_margin, bottom_margin) = (WIDTH as f32 - r, HEIGHT as f32 - b);
+    assert!((12.5..=15.5).contains(&right_margin) && (12.5..=15.5).contains(&bottom_margin), "{name}: a small margin to the right and bottom edge, got {right_margin} / {bottom_margin}");
+    // about 340 px; it widens only as far as the lettering of its buttons needs, and that depends on the fonts of the machine (French measured 344 px on one machine and 368 px on the CI runner)
+    assert!((318.0..=420.0).contains(&w), "{name}: about 340 px wide (up to 420 px for wide lettering), got {w}");
+    assert!(t >= 44.0, "{name}: stays below the title bar, top is {t}");
+    assert!(l > 500.0, "{name}: stays out of the middle column of the view, left is {l}");
+    // the card is 10 px padding + the text area (at most 190 px) + 8 + 34 (buttons) + 10 + 2 (frame)
+    assert!(h <= 256.0, "{name}: bounded height, got {h}");
+    if normal_text {
+        assert!(h < 232.0, "{name}: the normal texts fit without scrolling (a card at the height limit would be clipping them), got {h}");
+    }
+}
+
+#[test]
+fn the_overlay_sits_at_the_bottom_right_in_every_language_and_state_and_moves_nothing() {
+    let (ui, state, _mc, _p) = wired("overlay-geometry");
+    for lang in LANGUAGES {
+        {
+            let mut st = state.lock().unwrap();
+            crate::apply_language(&ui, &mut st, lang);
+        }
+        show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+        let baseline = frame(&ui);
+        for (name, case) in overlay_cases() {
+            let boxed = overlay_box(&ui, &state, &case, &baseline, 1.0);
+            check_geometry(&format!("{lang}/{name}"), boxed, name != "failed-long");
+            if name == "failed-long" {
+                assert!(boxed.3 - boxed.1 > 200.0, "{lang}: the long error reaches the height limit and scrolls instead of growing without end");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_overlay_has_the_same_place_and_size_at_100_125_150_175_and_200_percent() {
+    let (ui, state, _mc, _p) = wired("overlay-scales");
+    for scale in [1.0_f32, 1.25, 1.5, 1.75, 2.0] {
+        set_scale(&ui, scale);
+        for lang in LANGUAGES {
+            {
+                let mut st = state.lock().unwrap();
+                crate::apply_language(&ui, &mut st, lang);
+            }
+            show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+            let baseline = frame(&ui);
+            for (name, case) in overlay_cases().into_iter().filter(|(n, _)| ["available", "working", "failed-long", "notice"].contains(n)) {
+                let boxed = overlay_box(&ui, &state, &case, &baseline, scale);
+                check_geometry(&format!("{lang}/{name} at {}%", (scale * 100.0) as u32), boxed, name != "failed-long");
+            }
+        }
+    }
+}
+
+/// One pass over the grid points (logical pixels, 5 px apart) inside `bb` of a window that shows the overlay: for every counter, the points at which a click makes its callback fire.
+fn hit_points(ui: &MainWindow, bb: (f32, f32, f32, f32), counters: &[&Rc<Cell<u32>>]) -> Vec<Vec<(f32, f32)>> {
+    let mut hits = vec![Vec::new(); counters.len()];
+    let mut y = bb.1 + 1.0;
+    while y < bb.3 {
+        let mut x = bb.0 + 1.0;
+        while x < bb.2 {
+            counters.iter().for_each(|c| c.set(0));
+            click(ui, x, y);
+            for (k, c) in counters.iter().enumerate() {
+                if c.get() > 0 {
+                    hits[k].push((x, y));
+                }
+            }
+            x += 5.0;
+        }
+        y += 5.0;
+    }
+    hits
+}
+
+#[test]
+fn the_overlay_buttons_work_with_one_click_and_the_overlay_never_hides_the_main_controls() {
+    // the main controls of the view, found on a window without overlay (locate() builds its own window and its own renderer, so it runs before this test's window exists)
+    let play = locate(|ui, n| ui.on_play(move || n.set(n.get() + 1)), (300, 100, 700, 700));
+    let (ui, state, _mc, _p) = wired("overlay-reach");
+    let gear_click = |ui: &MainWindow| {
+        click(ui, GEAR.0, GEAR.1);
+        let opened = ui.get_advanced();
+        ui.set_advanced(false);
+        opened
+    };
+    for lang in LANGUAGES {
+        {
+            let mut st = state.lock().unwrap();
+            crate::apply_language(&ui, &mut st, lang);
+        }
+        show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+        let baseline = frame(&ui);
+        for (name, case) in overlay_cases() {
+            let bb = overlay_box(&ui, &state, &case, &baseline, 1.0);
+            let (act, later, second, play_n) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)), Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+            let (a, l, s, p) = (act.clone(), later.clone(), second.clone(), play_n.clone());
+            ui.on_update_action(move || a.set(a.get() + 1));
+            ui.on_update_dismiss(move || l.set(l.get() + 1));
+            ui.on_update_secondary_action(move || s.set(s.get() + 1));
+            ui.on_play(move || p.set(p.get() + 1));
+            let what = format!("{lang}/{name}");
+            // the main action: reachable unless it is hidden while installing; one click, one action
+            let mut found = hit_points(&ui, bb, &[&act, &later, &second]).into_iter();
+            let (acts, laters, seconds) = (found.next().unwrap(), found.next().unwrap(), found.next().unwrap());
+            assert_eq!(acts.is_empty(), name == "working", "{what}: the main button exists exactly when the update is not installing");
+            assert_eq!(laters.is_empty(), !["available", "nothing", "not-allowed", "network", "failed-long"].contains(&name), "{what}: Later exists for offer, nothing to install and failures only");
+            assert!(seconds.is_empty(), "{what}: no second button for the Flatpak update");
+            if let Some(&(x, y)) = acts.get(acts.len() / 2) {
+                act.set(0);
+                later.set(0);
+                click(&ui, x, y);
+                assert_eq!((act.get(), later.get()), (1, 0), "{what}: one click on the main button acts once and only there");
+            }
+            if let Some(&(x, y)) = laters.get(laters.len() / 2) {
+                act.set(0);
+                later.set(0);
+                click(&ui, x, y);
+                assert_eq!((act.get(), later.get()), (0, 1), "{what}: one click on Later acts once and only there");
+            }
+            // the buttons are not tiny: about 34 px high and wider than 60 px (measured with a 5 px grid), so that they are easy to hit
+            if !acts.is_empty() {
+                let (min_x, max_x) = acts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
+                let (min_y, max_y) = acts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.1), hi.max(p.1)));
+                assert!(max_x - min_x >= 54.0 && max_y - min_y >= 25.0, "{what}: the main button is large enough ({} x {})", max_x - min_x, max_y - min_y);
+            }
+            // the controls of the view stay reachable with the overlay up: PLAY, and the title bar (gear)
+            play_n.set(0);
+            click(&ui, play.0, play.1);
+            assert_eq!(play_n.get(), 1, "{what}: the PLAY button still works with the overlay up");
+            assert!(gear_click(&ui), "{what}: the gear (title bar) still works with the overlay up");
+            // a click on the text part of the card is swallowed: it does not reach what lies behind it
+            play_n.set(0);
+            click(&ui, bb.0 + 12.0, bb.1 + 12.0);
+            assert_eq!(play_n.get(), 0, "{what}: the card does not let a click through to the view");
+            // while the exit dialog is open the card's buttons do nothing
+            ui.set_confirm_exit(true);
+            act.set(0);
+            later.set(0);
+            for &(x, y) in acts.iter().chain(laters.iter()).step_by(3) {
+                click(&ui, x, y);
+            }
+            assert_eq!((act.get(), later.get()), (0, 0), "{what}: disabled under the exit dialog");
+            ui.set_confirm_exit(false);
+        }
+    }
+}
+
+/// Not a regression test: with `TSW_GUI_SNAPSHOTS=<dir>` it renders the whole window with the update overlay (every language, every state; PLAY ready and the setup view) to PPM files.
+#[test]
+fn render_update_overlay_snapshots_for_visual_review_when_asked() {
+    let Ok(dir) = std::env::var("TSW_GUI_SNAPSHOTS") else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+    let (ui, state, _mc, _p) = wired("overlay-snap");
+    for lang in LANGUAGES {
+        {
+            let mut st = state.lock().unwrap();
+            crate::apply_language(&ui, &mut st, lang);
+        }
+        for ready in [true, false] {
+            ui.set_can_play(ready);
+            for (name, case) in overlay_cases() {
+                show_case(&ui, &state, &case);
+                let (w, buf) = frame(&ui);
+                let mut out = format!("P6\n{w} {}\n255\n", buf.len() / w).into_bytes();
+                for p in &buf {
+                    out.extend([p.r, p.g, p.b]);
+                }
+                std::fs::write(format!("{dir}/overlay-{lang}-{}-{name}.ppm", if ready { "play" } else { "setup" }), out).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn the_overlay_is_not_part_of_the_advanced_view_and_leaves_with_the_notice() {
+    let (ui, state, _mc, _p) = wired("overlay-advanced");
+    show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+    ui.set_advanced(true);
+    let baseline = frame(&ui);
+    show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Available));
+    let (_, with) = frame(&ui);
+    assert!(changed_box(&baseline.1, &with, baseline.0).is_none(), "the scrolling advanced view shows no overlay");
+    ui.set_advanced(false);
+    show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+    let normal = frame(&ui);
+    show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Available));
+    ui.invoke_update_dismiss();
+    ui.set_version_info(slint::SharedString::new());
+    let (_, after_later) = frame(&ui);
+    assert!(changed_box(&normal.1, &after_later, normal.0).is_none(), "after Later the view is exactly the view without any notice");
+}
+
+#[cfg(feature = "windows-self-update")]
+mod windows_update_tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+    use tsw_launch::update::windows::{Download, Failure, Phase, RunningInstaller, Starter, Step};
+    use tsw_launch::update::{Installer, Offer};
+
+    struct Quiet;
+    impl Download for Quiet {
+        fn download(&self, _url: &str, _dest: &std::path::Path, _max: u64) -> Result<(), String> {
+            Err("not used here".into())
+        }
+    }
+    impl Starter for Quiet {
+        fn start(&self, _i: &std::path::Path, _d: &std::path::Path, _a: &[&str]) -> Result<Box<dyn RunningInstaller>, String> {
+            Err("not used here".into())
+        }
+    }
+
+    fn installer(version: &str) -> Installer {
+        Installer {
+            name: format!("tsw-forever-{version}-windows-setup.exe"),
+            url: format!("https://github.com/Glaubenskrieger/TSW-Forever/releases/download/v{version}/tsw-forever-{version}-windows-setup.exe"),
+            size: 10,
+            sha256: "a".repeat(64),
+        }
+    }
+
+    fn offer(with_previous: bool) -> Offer {
+        Offer {
+            channel: tsw_launch::channel::Channel::Stable,
+            use_as: tsw_launch::channel::OfferUse::Update,
+            version: "0.3.5".into(),
+            installer: installer("0.3.5"),
+            previous: with_previous.then(|| ("0.3.4".to_string(), installer("0.3.4"))),
+            notes_url: None,
+            expires: 4_000_000_000,
+        }
+    }
+
+    #[test]
+    fn the_windows_update_block_offers_updates_and_reacts_to_the_users_decisions() {
+        let (ui, state, _mc, _p) = wired("winupdate");
+        assert_eq!(ui.get_update_state(), 0, "nothing without an offer");
+        let set = |phase: Phase, with_previous: bool| {
+            let mut st = state.lock().unwrap();
+            st.update.win_offer = Some(offer(with_previous));
+            st.update.win = phase;
+            st.update.win_dismissed = false;
+            crate::render(&ui, &st);
+        };
+        set(Phase::Available, true);
+        assert_eq!((ui.get_update_state(), ui.get_update_button().as_str(), ui.get_update_secondary().as_str()), (1, "Update launcher", ""));
+        assert!(ui.get_update_detail().contains("Windows asks for your permission"));
+        ui.invoke_update_dismiss();
+        assert_eq!(ui.get_update_state(), 0, "Later hides the offer");
+        // a failure offers a retry and, because the signed metadata names a previous version, a restore
+        set(Phase::Failed(Failure::Declined), true);
+        assert_eq!((ui.get_update_state(), ui.get_update_secondary().as_str()), (5, "Restore previous version"));
+        set(Phase::Failed(Failure::Declined), false);
+        assert_eq!(ui.get_update_secondary().as_str(), "");
+        // without a service the attempt cannot start: a visible failure, never a hang
+        set(Phase::Available, false);
+        ui.invoke_update_action();
+        assert_eq!(ui.get_update_state(), 5, "no update service in this window");
+        // with a service the attempt starts at once: the window shows the first step while the worker runs
+        let dir = std::env::temp_dir().join(format!("tsw-winupd-ui-{}", std::process::id()));
+        {
+            let mut st = state.lock().unwrap();
+            st.update.win_services = Some(crate::WinServices { download: Arc::new(Quiet), starter: Arc::new(Quiet), updates_dir: dir.clone() });
+            st.update.win = Phase::Available;
+            crate::render(&ui, &st);
+        }
+        ui.invoke_update_action();
+        assert_eq!((ui.get_update_state(), state.lock().unwrap().update.win.clone()), (2, Phase::Working(Step::Downloading)));
+        assert!(ui.get_update_text().contains("Downloading"));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_started_installer_makes_the_launcher_leave_and_a_failure_keeps_it_open() {
+        let (ui, state, mc, _p) = wired("winfinish");
+        {
+            let mut st = state.lock().unwrap();
+            crate::win_update::windows_update_finished(&ui, &mut st, &mc, Err(Failure::Network("offline".into())));
+            crate::render(&ui, &st);
+            assert_eq!(st.update.win, Phase::Failed(Failure::Network("offline".into())));
+        }
+        assert!(ui.window().is_visible() && !mc.load(Ordering::SeqCst), "a failed update leaves the launcher open and unchanged");
+        {
+            let mut st = state.lock().unwrap();
+            crate::win_update::windows_update_finished(&ui, &mut st, &mc, Ok(()));
+            assert_eq!(st.update.win, Phase::Started);
+            assert!(st.install_cancel.load(Ordering::SeqCst));
+        }
+        assert!(!ui.window().is_visible() && mc.load(Ordering::SeqCst), "the launcher left so that the installer can replace it");
+    }
+
+    #[test]
+    fn a_failed_or_declined_installer_is_shown_as_what_it_was_and_the_window_asks_again_before_closing() {
+        use tsw_launch::update::windows::Failure as F;
+        let (ui, state, mc, _p) = wired("winresult");
+        for (failure, must_contain, must_not) in [
+            (F::Declined, "declined", "error code"),
+            (F::InstallerFailed(5), "error code 5", "declined"),
+            (F::NotStarted("access denied".into()), "could not be started", "declined"),
+            (F::ResultUnknown("handle".into()), "could not be read", "declined"),
+        ] {
+            let mut st = state.lock().unwrap();
+            st.update.win_offer = Some(offer(true));
+            st.update.win_installer_active.store(true, Ordering::SeqCst);
+            crate::win_update::windows_update_finished(&ui, &mut st, &mc, Err(failure.clone()));
+            crate::render(&ui, &st);
+            assert!(!st.update.win_installer_active.load(Ordering::SeqCst), "{failure:?}: the installer has ended, the window asks again before it closes");
+            assert_eq!(ui.get_update_state(), 5, "{failure:?}");
+            let text = ui.get_update_text().to_string();
+            assert!(text.contains(must_contain) && !text.contains(must_not), "{failure:?}: {text}");
+            assert_eq!(ui.get_update_secondary().as_str(), "Restore previous version", "{failure:?}");
+        }
+        assert!(ui.window().is_visible() && !mc.load(Ordering::SeqCst), "none of them closes the launcher");
+    }
+
+    #[test]
+    fn the_window_accepts_the_close_request_of_a_running_installer_and_asks_about_every_other_one() {
+        use slint::platform::WindowEvent;
+        let (ui, state, mc, _p) = wired("winclose");
+        // no installer: the operating system's close request only opens the "really quit?" question
+        ui.window().dispatch_event(WindowEvent::CloseRequested);
+        assert!(ui.get_confirm_exit() && ui.window().is_visible(), "without an installer a close request asks first");
+        ui.set_confirm_exit(false);
+        // the installer runs (Inno Setup closes the launcher to replace it and WAITS for that): the request is accepted at once
+        state.lock().unwrap().update.win_installer_active.store(true, Ordering::SeqCst);
+        ui.window().dispatch_event(WindowEvent::CloseRequested);
+        assert!(!ui.get_confirm_exit() && !ui.window().is_visible(), "a running installer must be able to close the launcher, or the update would hang");
+        assert!(!mc.load(Ordering::SeqCst), "this is not the launcher's own decision to leave");
+    }
+
+    // ---- the life cycle of `win_installer_active`: set only while the installer PROCESS runs, cleared on every way out ----
+
+    /// A scripted installer for `run_update`: what the download does, whether the start works, and what the running installer does.
+    struct Scripted {
+        download: Result<(), &'static str>,
+        start: Result<(), &'static str>,
+        wait: Wait,
+        flag: Arc<std::sync::atomic::AtomicBool>,
+        seen_while_waiting: Arc<std::sync::Mutex<Vec<bool>>>,
+    }
+
+    #[derive(Clone, Copy)]
+    enum Wait {
+        Exits(i32),
+        Unreadable,
+        Panics,
+    }
+
+    struct ScriptedRunning {
+        wait: Wait,
+        flag: Arc<std::sync::atomic::AtomicBool>,
+        seen: Arc<std::sync::Mutex<Vec<bool>>>,
+    }
+
+    impl RunningInstaller for ScriptedRunning {
+        fn wait(self: Box<Self>) -> Result<i32, String> {
+            // what the window would answer to a close request right now
+            self.seen.lock().unwrap().push(self.flag.load(Ordering::SeqCst));
+            match self.wait {
+                Wait::Exits(code) => Ok(code),
+                Wait::Unreadable => Err("handle is invalid".into()),
+                Wait::Panics => panic!("the installer wait went wrong (test)"),
+            }
+        }
+    }
+
+    impl Download for Scripted {
+        fn download(&self, _url: &str, dest: &std::path::Path, _max: u64) -> Result<(), String> {
+            self.seen_while_waiting.lock().unwrap().push(self.flag.load(Ordering::SeqCst)); // before the installer exists
+            self.download.map_err(String::from)?;
+            std::fs::write(dest, SCRIPT_BYTES).map_err(|e| e.to_string())
+        }
+    }
+
+    impl Starter for Scripted {
+        fn start(&self, _i: &std::path::Path, _d: &std::path::Path, _a: &[&str]) -> Result<Box<dyn RunningInstaller>, String> {
+            self.seen_while_waiting.lock().unwrap().push(self.flag.load(Ordering::SeqCst)); // the process does not exist yet
+            self.start.map_err(String::from)?;
+            Ok(Box::new(ScriptedRunning { wait: self.wait, flag: self.flag.clone(), seen: self.seen_while_waiting.clone() }))
+        }
+    }
+
+    const SCRIPT_BYTES: &[u8] = b"fixture installer bytes";
+    /// SHA-256 of `SCRIPT_BYTES`.
+    const SCRIPT_SHA256: &str = "7039e7b3e00d39fbfb2948ba31b6216ac9ffff01b4117a1cec08025255d9ad10";
+
+    /// Run the worker body against a script; returns the result, the flag after it, and what the flag was before the start, before the download and while waiting.
+    fn run_scripted(tag: &str, s: Scripted, flag: &Arc<std::sync::atomic::AtomicBool>) -> (Result<(), Failure>, bool, Vec<bool>) {
+        let dir = std::env::temp_dir().join(format!("tsw-winflag-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let i = Installer { size: SCRIPT_BYTES.len() as u64, sha256: SCRIPT_SHA256.into(), ..installer("0.3.5") };
+        let r = crate::win_update::run_update(&s, &s, &i, &dir, 7, flag, &mut |_| {});
+        let seen = s.seen_while_waiting.lock().unwrap().clone();
+        let _ = std::fs::remove_dir_all(&dir);
+        (r, flag.load(Ordering::SeqCst), seen)
+    }
+
+    fn scripted(download: Result<(), &'static str>, start: Result<(), &'static str>, wait: Wait) -> (Scripted, Arc<std::sync::atomic::AtomicBool>) {
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        (Scripted { download, start, wait, flag: flag.clone(), seen_while_waiting: Arc::new(std::sync::Mutex::new(vec![])) }, flag)
+    }
+
+    #[test]
+    fn the_flag_is_set_only_while_the_installer_process_runs_and_cleared_when_it_has_ended() {
+        for (code, expect) in [(0, Ok(())), (2, Err(Failure::Declined)), (1, Err(Failure::InstallerFailed(1))), (5, Err(Failure::InstallerFailed(5)))] {
+            let (s, flag) = scripted(Ok(()), Ok(()), Wait::Exits(code));
+            let (r, after, seen) = run_scripted("ends", s, &flag);
+            assert_eq!(r, expect, "exit code {code}");
+            assert_eq!(seen, [false, false, true], "exit code {code}: not set before the download or before the process exists, set while it runs");
+            assert!(!after, "exit code {code}: cleared when the installer has ended");
+        }
+    }
+
+    #[test]
+    fn a_failed_start_never_sets_the_flag() {
+        let (s, flag) = scripted(Ok(()), Err("Access is denied. (os error 5)"), Wait::Exits(0));
+        let (r, after, seen) = run_scripted("nostart", s, &flag);
+        assert_eq!(r, Err(Failure::NotStarted("Access is denied. (os error 5)".into())));
+        assert_eq!(seen, [false, false], "the window keeps asking before it closes: there is no installer");
+        assert!(!after);
+    }
+
+    #[test]
+    fn a_failed_download_or_an_unreadable_result_leaves_the_flag_cleared() {
+        let (s, flag) = scripted(Err("Could not resolve host"), Ok(()), Wait::Exits(0));
+        let (r, after, seen) = run_scripted("offline", s, &flag);
+        assert_eq!(r, Err(Failure::Network("Could not resolve host".into())));
+        assert_eq!((after, seen), (false, vec![false]), "nothing was ever started");
+        let (s, flag) = scripted(Ok(()), Ok(()), Wait::Unreadable);
+        let (r, after, _) = run_scripted("lost", s, &flag);
+        assert_eq!(r, Err(Failure::ResultUnknown("handle is invalid".into())));
+        assert!(!after, "an installer whose result cannot be read is over, too");
+    }
+
+    #[test]
+    fn a_worker_that_panics_cannot_leave_the_flag_set() {
+        // while the installer process "runs" the worker panics: the flag must not stay true and the failure must be reported instead of nothing
+        let (s, flag) = scripted(Ok(()), Ok(()), Wait::Panics);
+        let (r, after, seen) = run_scripted("panicwait", s, &flag);
+        assert_eq!(seen.last(), Some(&true), "the flag was set while the installer ran");
+        assert_eq!(r, Err(Failure::ResultUnknown("the update worker stopped unexpectedly".into())));
+        assert!(!after, "a panic must not leave the window closing without asking");
+    }
+
+    #[test]
+    fn the_flag_a_previous_attempt_left_behind_does_not_survive_a_new_one() {
+        // even if a flag was left set (it must not be), the end of the next attempt clears it
+        let (s, flag) = scripted(Err("offline"), Ok(()), Wait::Exits(0));
+        flag.store(true, Ordering::SeqCst);
+        let (_, after, _) = run_scripted("stale", s, &flag);
+        assert!(!after);
+    }
+
+    #[test]
+    fn the_end_of_the_update_in_the_window_clears_the_flag_on_every_result() {
+        use tsw_launch::update::windows::Failure as F;
+        let (ui, state, mc, _p) = wired("flagend");
+        for result in [Err(F::Declined), Err(F::InstallerFailed(5)), Err(F::NotStarted("x".into())), Err(F::ResultUnknown("y".into())), Err(F::Network("z".into()))] {
+            let mut st = state.lock().unwrap();
+            st.update.win_installer_active.store(true, Ordering::SeqCst);
+            crate::win_update::windows_update_finished(&ui, &mut st, &mc, result.clone());
+            assert!(!st.update.win_installer_active.load(Ordering::SeqCst), "{result:?}");
+        }
+        assert!(ui.window().is_visible() && !mc.load(Ordering::SeqCst));
+        // and a window that is asked to close while no installer runs asks first
+        use slint::platform::WindowEvent;
+        ui.window().dispatch_event(WindowEvent::CloseRequested);
+        assert!(ui.get_confirm_exit() && ui.window().is_visible(), "no installer, no close without asking");
+    }
+
+    #[test]
+    fn the_progress_steps_are_shown_while_the_update_works() {
+        let (ui, state, _mc, _p) = wired("winsteps");
+        for (step, text) in [(Step::Downloading, "Downloading"), (Step::Verifying, "Checking"), (Step::Starting, "Allow the Windows dialog"), (Step::Installing, "Allow the Windows dialog")] {
+            let mut st = state.lock().unwrap();
+            st.update.win_offer = Some(offer(true));
+            st.update.win = Phase::Working(step);
+            crate::render(&ui, &st);
+            assert_eq!(ui.get_update_state(), 2);
+            assert!(ui.get_update_text().contains(text), "{}", ui.get_update_text());
+        }
+    }
+
+    #[test]
+    fn only_a_normal_update_offer_counts_and_a_switch_to_stable_does_not() {
+        let normal = tsw_launch::update::Outcome::Offer(offer(false));
+        assert!(crate::win_update::update_offer(normal).is_some());
+        let mut switch = offer(false);
+        switch.use_as = tsw_launch::channel::OfferUse::SwitchToStable;
+        assert!(crate::win_update::update_offer(tsw_launch::update::Outcome::Offer(switch)).is_none(), "a testing build is never moved to stable by itself");
+        for o in [tsw_launch::update::Outcome::UpToDate, tsw_launch::update::Outcome::Unknown("offline".into()), tsw_launch::update::Outcome::Inactive("no key".into())] {
+            assert!(crate::win_update::update_offer(o).is_none());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_window_tests_run_in_a_sandbox_where_a_click_cannot_start_a_real_program() {
+    let root = sandbox();
+    let _ = fresh();
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+    assert!(home.starts_with(root) && std::path::PathBuf::from(std::env::var_os("XDG_DATA_HOME").unwrap()).starts_with(root), "HOME and the XDG folders are inside the sandbox");
+    assert_eq!(std::env::var_os("PATH").unwrap(), root.join("bin").as_os_str(), "the PATH holds only the stand-ins");
+    // no Wine runtime can be found (they are looked up below HOME and the installation folder), so the patcher and the game cannot be started through one
+    assert!(tsw_launch::discover::find_runtimes(&tsw_launch::discover::Env::from_process()).is_empty(), "no runtime in the sandbox");
+    // the default installation folder is a path inside the sandbox: the real ~/Games/The Secret World is not even named
+    let layout = crate::model::install_layout("", Some(home.as_path())).unwrap();
+    assert!(layout.base.starts_with(root), "{:?}", layout.base);
+    // a program that is looked up on the PATH is a stand-in that only writes its name to the log
+    let _ = std::fs::remove_file(root.join("calls.log"));
+    let status = std::process::Command::new("wine").arg("ClientPatcher.exe").status().unwrap();
+    assert!(status.success());
+    assert_eq!(std::fs::read_to_string(root.join("calls.log")).unwrap().trim(), "wine ClientPatcher.exe");
+    assert!(std::process::Command::new("sleep").arg("0").status().is_err(), "a real program of the machine is not on the PATH");
+}
+
+/// The sandbox cannot stop a program that a test NAMES with an absolute path, or a Wine that a test writes into the configuration (`runner = /usr/bin/wine`). So no window test may do either: this
+/// reads the source of this file. Needles are assembled so that the check does not match itself.
+#[cfg(unix)]
+#[test]
+fn no_window_test_names_a_program_by_absolute_path_or_configures_a_runner() {
+    let source = include_str!("ui_tests.rs");
+    let needles = [format!("{}.runner =", "config"), format!("{}\"runner", "write!(f, "), format!("Command::new(\"{}", "/"), format!("{}runner = ", "\\n"), format!("{}(\"/", "spawn")];
+    for needle in needles {
+        assert!(!source.contains(&needle), "a window test must not use `{needle}`");
+    }
 }

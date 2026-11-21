@@ -31,7 +31,11 @@ def tracked_files():
 class OnlyFlatpakAndSource(unittest.TestCase):
     def test_the_packaging_folder_holds_only_the_flatpak_the_windows_installer_and_the_project_configuration(self):
         # Windows (decision of 2026-11-05) is a separate operating system with its own per-user installer; it is not a Linux distribution package
-        self.assertEqual(sorted(os.listdir(os.path.join(ROOT, "packaging"))), ["flatpak", "project.conf", "windows"])
+        self.assertEqual(sorted(os.listdir(os.path.join(ROOT, "packaging"))), ["channels", "flatpak", "project.conf", "windows"])
+        # the update channel definitions: the stable one is public; the testing one exists only in the private development repository
+        channels = set(os.listdir(os.path.join(ROOT, "packaging", "channels")))
+        self.assertIn("stable.conf", channels)
+        self.assertLessEqual(channels, {"stable.conf", "testing.conf"})
         self.assertEqual(sorted(os.listdir(os.path.join(ROOT, "packaging", "windows"))), ["tsw-forever.iss"])
 
     def test_no_recipe_or_build_script_for_a_distribution_package_exists(self):
@@ -75,6 +79,15 @@ class OnlyFlatpakAndSource(unittest.TestCase):
         self.assertIn("cfg!(windows)", read("launcher/src/runner.rs"))
         self.assertIn("cfg!(windows)", read("launcher/src/main.rs"))
         self.assertIn("Native", read("launcher/src/runner.rs"))
+
+    def test_the_windows_build_script_self_check_accepts_a_build_without_installer(self):
+        # regression (0.3.1): with -SkipInstaller nothing is listed; the checksum file used to get one blank line and the self-check "lists 1 files, expected 0" failed
+        script = read("scripts/build_windows_installer.ps1")
+        self.assertIn('$sumText = if ($artifacts.Count -gt 0) { ($sums -join "`n") + "`n" } else { "" }', script)
+        self.assertIn("WriteAllText($sumFile, $sumText,", script)
+        # the self-check itself stays strict: the count of listed files must equal the count of artifacts, every hash is recomputed
+        self.assertIn("if ($listed.Count -ne $artifacts.Count) { throw", script)
+        self.assertIn("checksum mismatch for", script)
 
 
 if __name__ == "__main__":

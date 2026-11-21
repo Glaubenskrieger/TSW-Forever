@@ -95,6 +95,51 @@ component PlayButton inherits Rectangle {
     FocusRing { active: fs.has-focus; x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; }
 }
 
+// ---- the small buttons of the launcher-update overlay: the main action has the look of the big PLAY button (red gradient, light serif lettering), only much smaller;
+// `quiet` is the dark variant for "Later" (same size and lettering, dark surface like the other secondary buttons). Deliberately without animation and without a shadow. ------
+component NoticeButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> quiet: false;
+    callback clicked();
+    height: 34px;
+    // as wide as the lettering needs plus 14 px of padding on each side (the lettering differs by language)
+    min-width: label-text.preferred-width + 28px;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: root.enabled ? (ta.has-hover ? Theme.hover-border : (root.quiet ? Theme.btn-border : Theme.red-hot)) : Theme.faint;
+    background: root.enabled
+        ? (root.quiet
+            ? @linear-gradient(180deg, ta.has-hover ? Theme.btn-hover : Theme.btn-base 0%, ta.has-hover ? Theme.btn-hover : Theme.btn-base 100%)
+            : @linear-gradient(180deg, ta.has-hover ? Theme.hover-hi : Theme.red 0%, ta.has-hover ? Theme.hover-lo : Theme.red-deep 100%))
+        : @linear-gradient(180deg, #1c1a19 0%, #121110 100%);
+    label-text := Text {
+        text: root.label;
+        color: root.enabled ? (root.quiet ? Theme.text : #fbf3ea) : Theme.faint;
+        font-family: Theme.serif;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+    // Keyboard focus only (Tab), like the other buttons.
+    fs := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if (e.text == " " || e.text == "\n") { root.clicked(); return accept; }
+            reject
+        }
+    }
+    FocusRing { active: fs.has-focus; x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; }
+}
+
 // ---- quiet checkbox ------------------------------------------------------------------------------------------------
 component QuietCheck inherits Rectangle {
     in property <string> label;
@@ -350,7 +395,6 @@ export component MainWindow inherits Window {
     in property <string> detected-client;
     in property <string> detected-runtime;
     in property <string> detected-prefix;
-    in property <string> patch-status;
     in property <string> version-info;
     in property <string> message;
     in-out property <string> client-override;
@@ -388,6 +432,15 @@ export component MainWindow inherits Window {
     in property <string> install-state;
     // Windows: Direct3D libraries of Microsoft's DirectX June 2010 runtime are missing (empty text = nothing missing)
     in property <string> directx-text;
+    // launcher update (Flatpak): 0 = nothing to show, 1 = available, 2 = installing, 3 = installed (restart), 4 = nothing to install, 5 = failed, 6 = a newer version exists (Windows notice: the button opens the release page)
+    in property <int> update-state;
+    in property <string> update-text;
+    in property <string> update-detail;
+    in property <string> update-button;
+    in property <string> update-secondary;
+    callback update-action();
+    callback update-secondary-action();
+    callback update-dismiss();
     // Windows: install a NEW copy in another folder although an installation exists; and take that decision back
     in property <string> ignored-text;
     callback install-new-copy();
@@ -870,12 +923,9 @@ export component MainWindow inherits Window {
                         for r in root.rows : Entry { entry: r; }
                     }
 
-                    Card {
-                        title: @tr("PATCHER");
-                        accent: Theme.faint;
-                        Text { text: root.patch-status; color: Theme.dim; font-size: Theme.fs-small; wrap: word-wrap; }
-                        Text { text: root.version-info; color: Theme.faint; font-size: Theme.fs-small; wrap: word-wrap; }
-                    }
+                    // The patcher card with its technical texts is removed from the window while the client patcher is not active and usable; the
+                    // patch code, its checks and `tsw-launch patch status` are unchanged. The application version is the quiet line below (the normal view has it at the bottom right).
+                    Text { text: root.version-info; color: Theme.faint; font-size: Theme.fs-caption; horizontal-alignment: right; }
 
                     Text { visible: root.message != ""; text: root.message; color: Theme.warn; font-size: Theme.fs-small; wrap: word-wrap; }
 
@@ -907,6 +957,52 @@ export component MainWindow inherits Window {
                 BarButton { kind: root.advanced ? 2 : 0; enabled: !root.confirm-exit; clicked => { root.advanced = !root.advanced; if root.advanced { root.refresh-display(); } } }
                 BarButton { kind: 1; enabled: !root.confirm-exit; clicked => { root.minimized = true; } }
                 BarButton { kind: 4; enabled: !root.confirm-exit; clicked => { root.confirm-exit = true; } }
+            }
+        }
+
+        // ---- installed version: small and quiet at the bottom right. A launcher-update notice (Flatpak banner, or the Windows newer-version card that takes this very place)
+        // has priority: the version is hidden while one is shown. (The advanced view scrolls, so it has the version as its last quiet line instead.) No control, no animation. The text is the version this program was built with. ----
+        if !root.advanced && root.update-state == 0 : Text {
+            text: root.version-info;
+            color: Theme.faint;
+            font-size: Theme.fs-caption;
+            x: parent.width - self.width - 16px;
+            y: parent.height - self.height - 12px;
+        }
+
+        // ---- launcher-update overlay (Flatpak: update-state 1 to 5; Windows newer-version notice: 6): a small card at the bottom right, above the view without moving anything in it.
+        // It only shows what the update logic reports and offers the actions that logic already has: the main action (not while installing), "Later" (offer, nothing to install, failure) and,
+        // in the development-only Windows update, the restore button. The card is about 340 px wide (wider only when the lettering of its buttons needs it, never wider than the window), grows
+        // UPWARDS with longer texts and covers what lies behind it; texts taller than 190 px scroll inside the card, the buttons never scroll away. It swallows pointer input over its own
+        // area, so nothing below is pressed by accident. Not shown in the advanced view (which scrolls). ----
+        if root.update-state != 0 && !root.advanced : Rectangle {
+            width: min(max(340px, update-buttons.preferred-width + 20px), parent.width - 28px);
+            height: update-card.preferred-height;
+            x: parent.width - self.width - 14px;
+            y: parent.height - self.height - 14px;
+            background: #120a0cf0;
+            border-width: 1px;
+            border-color: Theme.red-deep;
+            border-radius: 4px;
+            TouchArea { }
+            update-card := VerticalLayout {
+                padding: 10px;
+                ScrollView {
+                    height: min(update-texts.preferred-height, 190px);
+                    update-texts := VerticalLayout {
+                        spacing: 4px;
+                        Text { text: root.update-text; wrap: word-wrap; color: root.update-state == 5 ? Theme.warn : #f4ece2; font-size: Theme.fs-small; }
+                        if root.update-detail != "" : Text { text: root.update-detail; wrap: word-wrap; color: Theme.dim; font-size: Theme.fs-caption; }
+                    }
+                }
+                update-buttons := HorizontalLayout {
+                    padding-top: root.update-state == 2 ? 0px : 8px;
+                    alignment: start;
+                    spacing: 8px;
+                    if root.update-state != 2 : NoticeButton { label: root.update-button; enabled: !root.confirm-exit; clicked => { root.update-action(); } }
+                    if root.update-secondary != "" && root.update-state == 5 : NoticeButton { quiet: true; label: root.update-secondary; enabled: !root.confirm-exit; clicked => { root.update-secondary-action(); } }
+                    if root.update-state == 1 || root.update-state == 4 || root.update-state == 5 : NoticeButton { quiet: true; label: @tr("Later"); enabled: !root.confirm-exit; clicked => { root.update-dismiss(); } }
+                }
             }
         }
 

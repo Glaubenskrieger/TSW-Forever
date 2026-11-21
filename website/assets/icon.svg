@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Original artwork for this project (no game logo, no third-party mark): a watching eye in a ring on near-black. -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="75%">
+      <stop offset="0" stop-color="#2a0c10"/>
+      <stop offset="0.55" stop-color="#120709"/>
+      <stop offset="1" stop-color="#050506"/>
+    </radialGradient>
+    <radialGradient id="iris" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#e0343c"/>
+      <stop offset="0.7" stop-color="#9b1c22"/>
+      <stop offset="1" stop-color="#5c0d12"/>
+    </radialGradient>
+    <clipPath id="eye"><path d="M28 128 Q128 44 228 128 Q128 212 28 128 Z"/></clipPath>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <rect x="3" y="3" width="250" height="250" rx="53" fill="none" stroke="#3a1b1e" stroke-width="2"/>
+  <circle cx="128" cy="128" r="104" fill="none" stroke="#7a151b" stroke-width="5"/>
+  <circle cx="128" cy="128" r="94" fill="none" stroke="#3a1b1e" stroke-width="2"/>
+  <path d="M28 128 Q128 44 228 128 Q128 212 28 128 Z" fill="#0a0506" stroke="#cf2a32" stroke-width="7" stroke-linejoin="round"/>
+  <g clip-path="url(#eye)">
+    <circle cx="128" cy="128" r="52" fill="url(#iris)"/>
+  </g>
+  <path d="M128 92 Q142 128 128 164 Q114 128 128 92 Z" fill="#050506"/>
+</svg>

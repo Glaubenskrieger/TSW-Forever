@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en" data-theme="templars">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="meta.title">The Secret World – Forever (TSW-Forever)</title>
+<meta name="description" content="A free, unofficial launcher for the original The Secret World (2012) on Linux, SteamOS and Windows." data-i18n-attr="content:meta.description">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/themes.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="page">
+<header class="site-header">
+  <div class="wrap bar">
+    <a class="brand" href="#top"><img src="assets/icon.svg" alt="" width="30" height="30"><span>TSW-Forever</span></a>
+    <nav class="main" aria-label="Main" data-i18n-attr="aria-label:nav.label">
+      <a href="#why" data-i18n="nav.why">Why TSW-Forever?</a>
+      <a href="#downloads" data-i18n="nav.downloads">Downloads</a>
+      <a href="#install" data-i18n="nav.install">Installation and updates</a>
+      <a href="#docs" data-i18n="nav.docs">Documentation</a>
+      <a href="#about" data-i18n="nav.about">About</a>
+      <a href="#legal" data-i18n="nav.legal">Legal notice</a>
+    </nav>
+    <div class="tools">
+      <label class="picker"><span data-i18n="ui.language">Language</span>
+        <select id="lang" aria-label="Language" data-i18n-attr="aria-label:ui.language">
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
+          <option value="fr">Français</option>
+          <option value="es">Español</option>
+          <option value="pt-BR">Português (Brasil)</option>
+          <option value="pl">Polski</option>
+        </select>
+      </label>
+      <div class="picker"><span data-i18n="ui.faction">Faction</span>
+        <span class="factions" role="group" aria-label="Faction" data-i18n-attr="aria-label:ui.faction">
+          <button type="button" class="chip" data-theme="templars" aria-pressed="true" title="Templars" aria-label="Templars" data-i18n-attr="title:faction.templars.name;aria-label:faction.templars.name"></button>
+          <button type="button" class="chip" data-theme="illuminati" aria-pressed="false" title="Illuminati" aria-label="Illuminati" data-i18n-attr="title:faction.illuminati.name;aria-label:faction.illuminati.name"></button>
+          <button type="button" class="chip" data-theme="dragon" aria-pressed="false" title="Dragon" aria-label="Dragon" data-i18n-attr="title:faction.dragon.name;aria-label:faction.dragon.name"></button>
+        </span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="wrap">
+      <div class="kicker" data-i18n="hero.kicker">The original Secret World · Independent community project</div>
+      <h1>The Secret World</h1>
+      <div class="rule" aria-hidden="true"></div>
+      <div class="sub">Forever</div>
+      <p class="motto" data-i18n="hero.motto">Some worlds you don't leave behind.</p>
+      <p class="lead" data-i18n="hero.lead">A free, unofficial launcher for the original The Secret World (2012) on Linux, SteamOS and Windows. It helps you set up the game and remembers your display settings.</p>
+      <div class="actions">
+        <a class="btn primary js-win-dl" href="https://github.com/Glaubenskrieger/TSW-Forever/releases/latest" rel="noopener" data-i18n="dl.win.button">Download TSW-Forever for Windows</a>
+        <a class="btn" href="#linux" data-i18n="hero.linux">Install on Linux / SteamOS</a>
+      </div>
+      <p class="small" data-i18n="hero.note">Not for Secret World Legends. No game servers, no account registration, no game files included.</p>
+    </div>
+  </section>
+
+  <section id="why">
+    <div class="wrap">
+      <h2 data-i18n="why.title">Why TSW-Forever?</h2>
+      <div class="story">
+        <p class="lead" data-i18n="why.p1">The Secret World is more than just a game to me.</p>
+        <p data-i18n="why.p2">It is a world full of secrets, unusual stories and an atmosphere that is still unmatched.</p>
+        <p data-i18n="why.p3">This universe has stayed with me since 2012. And even though time moves on, there are worlds you want to return to again and again.</p>
+        <p data-i18n="why.p4">TSW-Forever is my contribution to preserving the original The Secret World and keeping it accessible on modern systems.</p>
+        <p class="closing" data-i18n="why.p5">Not to reinvent it. But so that the original can remain what it is.</p>
+      </div>
+      <div class="grid">
+        <div class="card"><h3 data-i18n="why.preserve.title">Keeping the original</h3><p data-i18n="why.preserve.body">The launcher sets up the game you own and starts it. TSW-Forever contains no game files and does not replace any original game content with files of its own.</p></div>
+        <div class="card"><h3 data-i18n="why.systems.title">Modern systems</h3><p data-i18n="why.systems.body">It takes care of the technical side so that the original runs on current Linux, SteamOS and Windows 10/11 installations.</p></div>
+        <div class="card"><h3 data-i18n="why.legends.title">Not Secret World Legends</h3><p data-i18n="why.legends.body">This project is about the original game of 2012. It has nothing to do with Secret World Legends and offers no servers of its own.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2 data-i18n="features.title">What it does</h2>
+      <div class="grid">
+        <div class="card"><h3 data-i18n="features.install.title">Installs the game</h3><p data-i18n="features.install.body">Guides you through setting up the original game: through the download of the official Funcom installer (checked against a fixed SHA-256 checksum), through an installer you already have, or through an existing installation. On Windows the game runs natively, on Linux through Wine/Proton.</p></div>
+        <div class="card"><h3 data-i18n="features.settings.title">Remembers your display settings</h3><p data-i18n="features.settings.body">The game resolution you choose is kept between starts. On Linux, an adjustable frame-rate limit comes on top.</p></div>
+        <div class="card"><h3 data-i18n="features.languages.title">Six languages, four themes</h3><p data-i18n="features.languages.body">The launcher window speaks English, German, French, Spanish, Brazilian Portuguese and Polish, and comes in four colour themes: Templars, Illuminati, Dragon and a neutral one.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="downloads">
+    <div class="wrap">
+      <h2 data-i18n="dl.title">Downloads</h2>
+      <p data-i18n="dl.intro">The newest stable release is published on GitHub. The files are checked with SHA-256 checksums.</p>
+      <div class="grid two">
+        <div class="card dl">
+          <h3 data-i18n="dl.win.title">Windows 10 / 11</h3>
+          <p data-i18n="dl.win.req">For 64-bit Windows 10 or 11 (x64). The installer installs into "Program Files" and therefore asks you to confirm the User Account Control prompt (administrator rights). You also need the original The Secret World; if DirectX components are missing, the launcher offers to install them.</p>
+          <p><a class="btn primary js-win-dl" href="https://github.com/Glaubenskrieger/TSW-Forever/releases/latest" rel="noopener" data-i18n="dl.win.button">Download TSW-Forever for Windows</a></p>
+          <p class="small" id="win-status" role="status" data-i18n="dl.win.status.default">The button opens the page of the newest stable release.</p>
+          <p class="small" id="win-sums" hidden><span data-i18n="dl.sha.label">SHA-256 of the installer:</span> <code id="win-sha"></code><br><a id="win-sums-link" href="https://github.com/Glaubenskrieger/TSW-Forever/releases/latest" rel="noopener" data-i18n="dl.sha.file">SHA256SUMS file of this release</a></p>
+        </div>
+        <div class="card dl">
+          <h3 data-i18n="dl.linux.title">Linux and SteamOS</h3>
+          <p data-i18n="dl.linux.body">Flatpak for x86-64 computers, including compatible SteamOS devices (in Desktop Mode). Install it from the project's own signed Flatpak source.</p>
+          <p><a class="btn primary" href="#linux" data-i18n="dl.linux.button">Show the Flatpak instructions</a></p>
+          <p class="small" data-i18n="dl.linux.small">A single-file bundle (without automatic updates) is also available on the releases page.</p>
+        </div>
+      </div>
+      <p class="small"><a href="https://github.com/Glaubenskrieger/TSW-Forever/releases" rel="noopener" data-i18n="dl.all">All releases, the bundle and the source code on GitHub</a></p>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2 data-i18n="install.title">Installation and updates</h2>
+
+      <h3 class="sub-h" data-i18n="install.win.title">Windows</h3>
+      <div class="card wide">
+        <ol>
+          <li data-i18n="install.win.s1">Download the installer. The SHA-256 checksum is a digital fingerprint of the file: calculate it in PowerShell and compare it with the value on this page or in SHA256SUMS. It must match exactly.</li>
+        </ol>
+        <div class="cmd"><pre><code>Get-FileHash .\tsw-forever-*-windows-setup.exe -Algorithm SHA256</code></pre><button type="button" class="copy" data-copy data-i18n="ui.copy">Copy</button></div>
+        <ol start="2">
+          <li data-i18n="install.win.s2">Run the installer. Windows asks for administrator permission once; choose your language in the first dialog.</li>
+          <li data-i18n="install.win.s3">Start TSW-Forever from the Start menu. At the first start choose how to get the game: the official installer download, an installer you already have, or an existing installation.</li>
+        </ol>
+        <p class="notice" data-i18n="install.win.smart">The installer is not signed with a certificate. Windows may therefore show a SmartScreen warning ("Windows protected your PC"). Run it only if you downloaded it from the project's official source (this page or the project's release page on GitHub) and the checksum matches; then choose "More info" and "Run anyway". Do not switch off any Windows protection for this. If Windows blocks the installer completely, for example with Smart App Control switched on, it cannot be run on that computer.</p>
+      </div>
+
+      <h3 class="sub-h" id="linux" data-i18n="linux.title">Linux and SteamOS (Flatpak)</h3>
+      <p class="notice" data-update-source="manual" data-i18n="linux.pending">The project's own Flatpak update source is not active yet. The links and commands below start working as soon as the project owner has switched it on. Until then, use the single-file bundle from the releases page.</p>
+      <p data-i18n="linux.req">TSW-Forever itself is a Linux application (Flatpak). The original Windows game runs on Linux through Wine/Proton; the launcher downloads the matching environment during setup, with your confirmation. Requirements: Flatpak on an x86-64 computer, a Vulkan-capable graphics driver with 32-bit support, and XWayland. Flathub only supplies the Flatpak runtimes here; TSW-Forever is not published there. On SteamOS, do this in Desktop Mode.</p>
+      <div class="grid">
+        <div class="card">
+          <h3 data-i18n="linux.a.title">A. Graphical: KDE Discover</h3>
+          <p data-i18n="linux.a.body">Open the install file with your software centre (KDE Discover, GNOME Software): it installs TSW-Forever and sets up the project's signed source along the way. The repository file only sets up the source; you then install TSW-Forever yourself.</p>
+          <p><a class="btn primary" href="org.tswlauncher.Launcher.flatpakref" download data-i18n="linux.a.ref">Install file (.flatpakref)</a></p>
+          <p><a class="btn" href="tsw-forever.flatpakrepo" download data-i18n="linux.a.repo">Add only the source (.flatpakrepo)</a></p>
+          <p class="small" data-i18n="linux.a.note">If the graphical installation does not work, you can also set up the source in the terminal (B and C).</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="linux.b.title">B. Add the source in the terminal</h3>
+          <p data-i18n="linux.b.body">One command, for your user, without sudo. Flatpak checks everything from this source against the project's public signing key:</p>
+          <div class="cmd"><pre><code>flatpak remote-add --user --if-not-exists tsw-forever https://glaubenskrieger.github.io/TSW-Forever/tsw-forever.flatpakrepo</code></pre><button type="button" class="copy" data-copy data-i18n="ui.copy">Copy</button></div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="linux.c.title">C. Install in the terminal</h3>
+          <p data-i18n="linux.c.body">Install the launcher from that source and start it:</p>
+          <div class="cmd"><pre><code>flatpak install --user tsw-forever org.tswlauncher.Launcher//stable</code></pre><button type="button" class="copy" data-copy data-i18n="ui.copy">Copy</button></div>
+          <div class="cmd"><pre><code>flatpak run --user org.tswlauncher.Launcher</code></pre><button type="button" class="copy" data-copy data-i18n="ui.copy">Copy</button></div>
+        </div>
+      </div>
+
+      <h3 class="sub-h" data-i18n="updates.title">Updates</h3>
+      <div class="grid">
+        <div class="card"><h3 data-i18n="updates.win.title">Windows</h3><p data-i18n="updates.win.body">There is no automatic update on Windows. When a newer release exists, the launcher shows a notice with a button that opens the release page. Download the new installer and run it over the old one: your settings and your game folder are kept.</p></div>
+        <div class="card" data-update-source="manual"><h3 data-i18n="updates.linux.title">Linux and SteamOS</h3><p data-i18n="updates.linux.manual">If you installed the single-file bundle (without an update source), download the newer bundle from the releases page and install it over the old one. Your settings and your game folder are kept:</p><div class="cmd"><pre><code>flatpak install --user --reinstall ./tsw-forever-*.flatpak</code></pre><button type="button" class="copy" data-copy data-i18n="ui.copy">Copy</button></div></div>
+        <div class="card" data-update-source="live" hidden><h3 data-i18n="updates.linux.title">Linux and SteamOS</h3><p data-i18n="updates.linux.live">If you install TSW-Forever from the project's source, Flatpak checks every update against the project's signing key. While the launcher is running it asks the Flatpak update portal. If a version is available it offers "Update launcher"; Flatpak installs it only after you agree, and the new version starts the next time. Software centres such as KDE Discover also show updates according to their own settings, and flatpak update works as usual. Flatpak itself does not run updates in the background without a trigger.</p><div class="cmd"><pre><code>flatpak update --user org.tswlauncher.Launcher</code></pre><button type="button" class="copy" data-copy data-i18n="ui.copy">Copy</button></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="docs">
+    <div class="wrap">
+      <h2 data-i18n="docs.title">Documentation</h2>
+      <p data-i18n="docs.body">The technical documentation is currently only available in English. It is part of the project repository on GitHub:</p>
+      <ul>
+        <li><a href="https://github.com/Glaubenskrieger/TSW-Forever/blob/main/documentation/user-guide.md" rel="noopener" data-i18n="docs.guide">User guide</a></li>
+        <li><a href="https://github.com/Glaubenskrieger/TSW-Forever#readme" rel="noopener" data-i18n="docs.readme">README: installation guide</a></li>
+        <li><a href="https://github.com/Glaubenskrieger/TSW-Forever#7-troubleshooting-and-known-limitations" rel="noopener" data-i18n="docs.trouble">Troubleshooting and known limitations</a></li>
+        <li><a href="https://github.com/Glaubenskrieger/TSW-Forever/blob/main/documentation/building-from-source.md" rel="noopener" data-i18n="docs.build">Building from source</a></li>
+        <li><a href="https://github.com/Glaubenskrieger/TSW-Forever/blob/main/CHANGELOG.md" rel="noopener" data-i18n="docs.changelog">Changelog</a></li>
+        <li><a href="https://github.com/Glaubenskrieger/TSW-Forever/issues" rel="noopener" data-i18n="docs.issues">Report a problem</a></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="about">
+    <div class="wrap">
+      <h2 data-i18n="about.title">About TSW-Forever</h2>
+      <p data-i18n="about.body">TSW-Forever is a free, independent launcher for the original The Secret World (2012), developed as a community project. The source code of released versions is available on GitHub under GPL-3.0-or-later. The aim is simple: keep the original game easy to install and to start, on today's systems.</p>
+      <div class="grid">
+        <div class="card"><h3 data-i18n="about.open.title">Open source</h3><p data-i18n="about.open.body">The source code of released versions is available on GitHub under GPL-3.0-or-later. The game, Wine/Proton and Microsoft components are not part of the project and keep their own terms.</p><p><a href="https://github.com/Glaubenskrieger/TSW-Forever" rel="noopener" data-i18n="about.github">The project on GitHub</a></p></div>
+        <div class="card"><h3 data-i18n="about.phil.title">Our approach</h3><p data-i18n="about.phil.body">Careful before fast: the launcher downloads and installs game components only after you have started the setup yourself. What it downloads on its own is checked against fixed checksums. We only promise what can be shown to work.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="legal">
+    <div class="wrap">
+      <h2 data-i18n="legal.title">Legal notice</h2>
+      <div class="legal">
+        <p data-i18n="legal.body1">TSW-Forever is an independent, non-commercial community project. It is not affiliated with, endorsed by or sponsored by Funcom or Microsoft. Game and product names belong to their respective rights holders.</p>
+        <p data-i18n="legal.body2">The launcher and this site contain no game files, no Funcom installer and no Microsoft components. Required components are obtained on your own computer, with your consent.</p>
+        <p data-i18n="legal.body4">You need your own valid access to the original game. The project provides no game servers, no user accounts and no proprietary game files.</p>
+        <h3 data-i18n="legal.privacy.title">Privacy</h3>
+        <p data-i18n="legal.body3">This site uses no analytics or advertising trackers, loads no fonts, scripts or images from third parties and sets no cookies itself. Your language and faction choice is stored only locally in your browser. The site is delivered through GitHub Pages; GitHub then processes the connection data that is technically necessary, such as your IP address. To find the current Windows installer, the page asks GitHub for the newest release information when it opens. Links to GitHub only connect you when you click them; GitHub's privacy policy then applies.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap"><p data-i18n="footer.text">TSW-Forever · independent community project · GPL-3.0-or-later</p></div>
+</footer>
+</div>
+
+<div id="gate" class="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title" aria-describedby="gate-text">
+  <div class="gate-box">
+    <h2 id="gate-title" data-i18n="gate.title">Choose your faction</h2>
+    <p id="gate-text" data-i18n="gate.text">This only changes the colours of this site. You can change it at any time with the three round buttons in the header.</p>
+    <div class="faction-grid">
+      <button type="button" class="faction" data-theme="templars" data-pick="templars"><span class="sigil"></span><span class="name" data-i18n="faction.templars.name">Templars</span><span class="desc" data-i18n="faction.templars.desc">Dark red and black, with a subtle gold.</span></button>
+      <button type="button" class="faction" data-theme="illuminati" data-pick="illuminati"><span class="sigil"></span><span class="name" data-i18n="faction.illuminati.name">Illuminati</span><span class="desc" data-i18n="faction.illuminati.desc">Deep blue and black, with cool light.</span></button>
+      <button type="button" class="faction" data-theme="dragon" data-pick="dragon"><span class="sigil"></span><span class="name" data-i18n="faction.dragon.name">Dragon</span><span class="desc" data-i18n="faction.dragon.desc">Dark green and black, with quiet mystery.</span></button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<noscript><div class="wrap small noscript">
+<p lang="en">Without JavaScript the page stays readable in English. The language and faction choice and the automatic search for the installer need JavaScript; the download button then opens the release page.</p>
+<p lang="de">Ohne JavaScript bleibt die Seite auf Englisch lesbar. Sprach- und Fraktionswahl und die automatische Suche nach dem Installer brauchen JavaScript; der Download-Knopf öffnet dann die Release-Seite.</p>
+<p lang="fr">Sans JavaScript, la page reste lisible en anglais. Le choix de la langue et de la faction ainsi que la recherche automatique de l'installateur nécessitent JavaScript ; le bouton de téléchargement ouvre alors la page des versions.</p>
+<p lang="es">Sin JavaScript, la página sigue siendo legible en inglés. La elección de idioma y de facción y la búsqueda automática del instalador necesitan JavaScript; el botón de descarga abre entonces la página de versiones.</p>
+<p lang="pt-BR">Sem JavaScript, a página continua legível em inglês. A escolha de idioma e de facção e a busca automática do instalador precisam de JavaScript; o botão de download abre então a página de versões.</p>
+<p lang="pl">Bez JavaScriptu strona pozostaje czytelna po angielsku. Wybór języka i frakcji oraz automatyczne wyszukiwanie instalatora wymagają JavaScriptu; przycisk pobierania otwiera wtedy stronę wydań.</p>
+</div></noscript>
+
+<script src="js/config.js"></script>
+<script src="js/i18n/en.js"></script>
+<script src="js/i18n/de.js"></script>
+<script src="js/i18n/fr.js"></script>
+<script src="js/i18n/es.js"></script>
+<script src="js/i18n/pt-BR.js"></script>
+<script src="js/i18n/pl.js"></script>
+<script src="js/app.js"></script>
+<script src="js/source.js"></script>
+<script src="js/download.js"></script>
+</body>
+</html>

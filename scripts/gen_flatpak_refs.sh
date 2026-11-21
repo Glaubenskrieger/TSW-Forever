@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the install files for the project's Flatpak repository: <out>/tsw-forever.flatpakrepo and <out>/org.tswlauncher.Launcher.flatpakref (stable) and org.tswlauncher.Launcher-testing.flatpakref.
+# Create the install files for the project's Flatpak repository (stable only): <out>/tsw-forever.flatpakrepo and <out>/org.tswlauncher.Launcher.flatpakref.
 #   scripts/gen_flatpak_refs.sh <out-dir> <public-gpg-key-file>
 # URLs come from packaging/project.conf. The public key (binary or ASCII-armoured export of the signing key) is embedded base64 as `GPGKey=`.
 # Nothing is published by this script.
@@ -19,13 +19,11 @@ Homepage=$REPO_URL
 Comment=Launcher for the original The Secret World client
 GPGKey=$b64
 EOT
-for ch in stable testing; do
-  if [ "$ch" = stable ]; then suffix=""; label=""; else suffix="-$ch"; label=" ($ch)"; fi; branch="$ch"
-cat > "$out/$APP_ID$suffix.flatpakref" <<EOT
+cat > "$out/$APP_ID.flatpakref" <<EOT
 [Flatpak Ref]
-Title=$PROJECT_NAME Launcher$label
+Title=$PROJECT_NAME Launcher
 Name=$APP_ID
-Branch=$branch
+Branch=stable
 Url=$FLATPAK_REPO_URL
 IsRuntime=false
 SuggestRemoteName=tsw-forever
@@ -33,5 +31,4 @@ RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
 Homepage=$REPO_URL
 GPGKey=$b64
 EOT
-done
-echo "wrote $out/tsw-forever.flatpakrepo and the .flatpakref files for stable and testing"
+echo "wrote $out/tsw-forever.flatpakrepo and $out/$APP_ID.flatpakref (stable)"

@@ -91,6 +91,14 @@ Invoke-Setup @() "update"
 Test-Installed $defaultDir
 if (@(Get-UninstallEntries).Count -ne 1) { throw "an update created a second uninstall entry" }
 if ((Get-ChildItem $defaultDir -Recurse -File | ForEach-Object Name | Sort-Object) -join "," -ne $before) { throw "the update changed the set of files in the program folder" }
+# the launcher's OWN update starts the installer with these arguments (a silent progress window instead of /VERYSILENT, the running launcher is closed by the installer);
+# /RELAUNCH=0 here so that no window is opened on the runner (the launcher itself passes /RELAUNCH=1 and is then started again as the original user)
+$ua = @("/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/RELAUNCH=0", "/LOG=`"$work\update-launcher.log`"")
+$up = Start-Process -FilePath $setup -ArgumentList $ua -Wait -PassThru
+if ($up.ExitCode -ne 0) { throw "the launcher-style update exited with $($up.ExitCode); see $work\update-launcher.log" }
+Test-Installed $defaultDir
+if (@(Get-UninstallEntries).Count -ne 1) { throw "the launcher-style update created a second uninstall entry" }
+if ((Get-ChildItem $defaultDir -Recurse -File | ForEach-Object Name | Sort-Object) -join "," -ne $before) { throw "the launcher-style update changed the set of files" }
 Invoke-Uninstall $defaultDir
 if (Test-Path (Join-Path $commonStart "TSW-Forever.lnk")) { throw "Start menu entry left behind" }
 if (@(Get-UninstallEntries).Count -ne 0) { throw "uninstall entry left behind" }

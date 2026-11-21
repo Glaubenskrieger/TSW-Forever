@@ -8,7 +8,19 @@
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// One line for `--version` and the diagnostics: the three version axes side by side, so they cannot be mistaken for each other.
 pub fn version_line(program: &str) -> String {
-    format!("{program} {APP_VERSION} (patch engine tsw-patch {}, patch manifest format {})", tsw_patch::ENGINE_VERSION, tsw_patch::MANIFEST_FORMAT)
+    format!("{program} {APP_VERSION}{} (patch engine tsw-patch {}, patch manifest format {})", channel_suffix(), tsw_patch::ENGINE_VERSION, tsw_patch::MANIFEST_FORMAT)
+}
+
+/// A stable build says nothing extra; a testing build says so (and carries its marker, which the stable build must never contain).
+fn channel_suffix() -> String {
+    #[cfg(channel_testing)]
+    {
+        format!(" [testing build {}]", crate::channel::MARKER)
+    }
+    #[cfg(not(channel_testing))]
+    {
+        String::new()
+    }
 }
 
 pub fn engine_version() -> &'static str {
@@ -58,7 +70,9 @@ mod tests {
     #[test]
     fn the_version_line_names_the_three_axes_and_matches_the_crates() {
         let l = version_line("tsw-launch");
-        assert!(l.starts_with(&format!("tsw-launch {APP_VERSION} (patch engine tsw-patch ")) && l.contains("manifest format 1"), "{l}");
+        assert!(l.starts_with(&format!("tsw-launch {APP_VERSION}")) && l.contains("(patch engine tsw-patch ") && l.contains("manifest format 1"), "{l}");
+        #[cfg(not(channel_testing))]
+        assert!(l.starts_with(&format!("tsw-launch {APP_VERSION} (patch engine tsw-patch ")), "a stable build adds nothing to the line: {l}");
         assert_ne!(APP_VERSION, tsw_patch::ENGINE_VERSION, "launcher and patch engine are versioned independently");
     }
 

@@ -16,10 +16,10 @@ case "$dir" in "$root/build/native/stage/"*) ;; *) echo "native_stage: refusing 
 mkdir -p "$dir"
 rsync -a --delete --delete-excluded \
   --include='/patcher/' --include='/patcher/Cargo.toml' --include='/patcher/Cargo.lock' --include='/patcher/src/***' \
-  --include='/launcher/' --include='/launcher/Cargo.toml' --include='/launcher/Cargo.lock' --include='/launcher/src/***' --include='/launcher/tests/***' \
+  --include='/launcher/' --include='/launcher/Cargo.toml' --include='/launcher/Cargo.lock' --include='/launcher/build.rs' --include='/launcher/src/***' --include='/launcher/tests/***' \
   --include='/launcher-gui/' --include='/launcher-gui/Cargo.toml' --include='/launcher-gui/Cargo.lock' --include='/launcher-gui/build.rs' \
-  --include='/launcher-gui/src/***' --include='/launcher-gui/ui/***' --include='/launcher-gui/assets/***' --include='/launcher-gui/translations/***' --include='/launcher-gui/packaging/***' \
-  --include='/packaging/' --include='/packaging/project.conf' --include='/packaging/flatpak/' --include='/packaging/flatpak/***' --include='/packaging/windows/***' \
+  --include='/launcher-gui/src/***' --include='/launcher-gui/tests/***' --include='/launcher-gui/ui/***' --include='/launcher-gui/assets/***' --include='/launcher-gui/translations/***' --include='/launcher-gui/packaging/***' \
+  --include='/packaging/' --include='/packaging/project.conf' --include='/packaging/channels/' --include='/packaging/channels/stable.conf' --include='/packaging/flatpak/' --include='/packaging/flatpak/***' --include='/packaging/windows/***' \
   --include='/scripts/' --include='/scripts/install_native.sh' --include='/scripts/version.py' --include='/scripts/build_flatpak.sh' --include='/scripts/check_flatpak_package.py' \
   --include='/scripts/build_windows_installer.ps1' --include='/scripts/test_windows_installer.ps1' --include='/documentation/building-windows.md' \
   --include='/documentation/' --include='/documentation/building-from-source.md' \

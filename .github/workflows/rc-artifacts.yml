@@ -30,7 +30,7 @@ jobs:
       artifact: tsw-forever-${{ steps.version.outputs.version }}-release-set-${{ github.sha }}
     steps:
       - name: Check out the repository (read-only token, no stored credentials, full history for the main check)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -53,7 +53,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev libxi-dev
+          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev libxi-dev ostree gnupg
       - name: Allow the unprivileged user namespaces that flatpak-builder (bubblewrap) needs on Ubuntu 24.04 (setting of this runner VM only)
         run: |
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
@@ -71,6 +71,8 @@ jobs:
       - name: Fetch the crates of the committed Cargo.lock for the tests (network step 1 of 2)
         run: scripts/build_flatpak.sh fetch --allow-network
       - name: Tests (launcher, GUI, patcher, packaging policy and the release scripts) - before any artifact is built
+        env:
+          TSW_REQUIRE_TOOLS: "1"  # the signing, mirror, delta and release tests must run here (ostree and gnupg are installed above), never be skipped for a missing program
         run: |
           scripts/build_flatpak.sh test
           python3 -I scripts/test_check_release_artifacts.py
@@ -136,16 +138,22 @@ jobs:
         run: |
           version="${{ steps.version.outputs.version }}"
           set="build/rc"
+          branch="${FLATPAK_BRANCH:-local}"
           flatpak install --user --noninteractive "$set/tsw-forever-${version}.flatpak"
-          reported="$(flatpak run --command=tsw-launch org.tswlauncher.Launcher//local --version)"
+          if [ "$branch" = stable ]; then
+            # a stable bundle knows its update source: the project's repository is configured as the remote
+            . packaging/project.conf
+            flatpak remotes --user --columns=url | grep -qx "$FLATPAK_REPO_URL" || { echo "the stable bundle did not configure the update source $FLATPAK_REPO_URL" >&2; exit 1; }
+          fi
+          reported="$(flatpak run --command=tsw-launch "org.tswlauncher.Launcher//$branch" --version)"
           echo "$reported"
           case "$reported" in *"$version"*) ;; *) echo "the installed Flatpak reports another version than $version" >&2; exit 1;; esac
           python3 -I scripts/check_release_artifacts.py \
             "$set/tsw-forever-${version}-src.tar.gz" \
-            "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/local/active/files"
-          python3 -I scripts/check_licenses.py "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/local/active/files/share/licenses/tsw-forever"
+            "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/$branch/active/files"
+          python3 -I scripts/check_licenses.py "$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/$branch/active/files/share/licenses/tsw-forever"
       - name: Upload the release set as workflow artifacts (no release is created; kept 30 days)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tsw-forever-${{ steps.version.outputs.version }}-release-set-${{ github.sha }}
           path: build/rc/

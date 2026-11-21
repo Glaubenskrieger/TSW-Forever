@@ -1,0 +1,142 @@
+/* TSW-Forever web site. The colours come from themes.css (generated from the launcher's own theme table); this file holds layout and the surface style of the launcher:
+   dark cards with a thin line, a red-gradient call-to-action in letter-spaced serif, quiet secondary buttons. No external fonts, images or scripts. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; scroll-padding-top: 4.5rem; -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+
+body {
+  margin: 0;
+  color: var(--text);
+  background-color: var(--ink);
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -10%, var(--glow), transparent 70%),
+    linear-gradient(180deg, var(--bg-start) 0%, var(--bg-mid) 45%, var(--bg-end) 100%);
+  background-attachment: fixed;
+  font: 16px/1.65 system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  min-height: 100vh;
+}
+
+.serif, h1, h2, h3, .brand, .btn { font-family: "Noto Serif", Georgia, "Times New Roman", serif; }
+
+a { color: var(--accent-hot); text-underline-offset: 3px; }
+a:hover { color: var(--hover-border); }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: 3px; }
+
+code, pre { font-family: ui-monospace, "Cascadia Code", "DejaVu Sans Mono", Consolas, monospace; font-size: 0.9em; }
+code { background: var(--btn-base); border: 1px solid var(--card-line); border-radius: 3px; padding: 0.05em 0.35em; }
+pre { background: var(--btn-base); border: 1px solid var(--card-line); border-radius: 4px; padding: 0.8rem 1rem; overflow-x: auto; margin: 0.6rem 0 1rem; color: var(--text); }
+pre code { background: none; border: 0; padding: 0; }
+
+.wrap { width: min(1080px, 100% - 2rem); margin-inline: auto; }
+
+/* ---- header --------------------------------------------------------------------------------------------------------- */
+.site-header { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--ink) 88%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--frame); }
+.bar { display: flex; align-items: center; gap: 1rem; min-height: 3.5rem; flex-wrap: wrap; padding-block: 0.4rem; }
+.brand { display: inline-flex; align-items: center; gap: 0.6rem; color: var(--text); text-decoration: none; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; font-size: 0.95rem; }
+.brand img { width: 30px; height: 30px; border-radius: 6px; }
+nav.main { display: flex; flex-wrap: wrap; gap: 0.15rem 1.1rem; margin-left: auto; }
+nav.main a { color: var(--dim); text-decoration: none; font-size: 0.9rem; padding: 0.25rem 0; border-bottom: 1px solid transparent; }
+nav.main a:hover { color: var(--text); border-bottom-color: var(--accent-hot); }
+.tools { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+
+.picker { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--dim); font-size: 0.8rem; }
+.picker select { background: var(--btn-base); color: var(--text); border: 1px solid var(--btn-border); border-radius: 3px; padding: 0.3rem 0.5rem; font: inherit; }
+.picker select:hover { border-color: var(--hover-border); }
+
+.factions { display: inline-flex; gap: 0.35rem; }
+.chip { width: 1.7rem; height: 1.7rem; border-radius: 50%; border: 2px solid var(--btn-border); cursor: pointer; padding: 0; background: var(--btn-base); position: relative; transition: border-color 0.15s; }
+.chip::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, var(--accent-hot), var(--accent-deep)); }
+.chip:hover { border-color: var(--hover-border); }
+.chip[aria-pressed="true"] { border-color: var(--ornament); box-shadow: 0 0 0 2px var(--ink), 0 0 0 3px var(--ornament); }
+
+/* ---- sections --------------------------------------------------------------------------------------------------------- */
+section { padding-block: 3.2rem; }
+section + section { border-top: 1px solid var(--frame); }
+h1, h2, h3 { line-height: 1.2; margin: 0 0 0.8rem; font-weight: 700; }
+h2 { font-size: clamp(1.3rem, 2.6vw, 1.7rem); letter-spacing: 0.08em; text-transform: uppercase; }
+h2::after { content: ""; display: block; width: 3.2rem; height: 2px; background: linear-gradient(90deg, var(--ornament), transparent); margin-top: 0.6rem; }
+h3 { font-size: 1.05rem; letter-spacing: 0.04em; color: var(--text); }
+p { margin: 0 0 1rem; color: var(--dim); max-width: 68ch; }
+.lead { font-size: 1.1rem; color: var(--text); }
+.kicker { color: var(--ornament); letter-spacing: 0.3em; text-transform: uppercase; font-size: 0.78rem; margin-bottom: 1rem; }
+ol, ul { color: var(--dim); padding-left: 1.3rem; max-width: 72ch; }
+li { margin-bottom: 0.45rem; }
+
+.hero { padding-block: clamp(3rem, 9vw, 6.5rem) 3.5rem; text-align: center; }
+.hero h1 { font-size: clamp(1.8rem, 6vw, 3.4rem); letter-spacing: 0.16em; text-transform: uppercase; margin-bottom: 0; }
+/* the launcher's title block: the thin red line fading out at both ends, then FOREVER in the hot accent colour */
+.hero .rule { height: 1px; width: min(26rem, 80%); margin: 1rem auto; background: linear-gradient(90deg, transparent, var(--accent), transparent); }
+.hero .sub { color: var(--accent-hot); letter-spacing: 0.55em; text-transform: uppercase; font-size: 0.8rem; margin-bottom: 1.6rem; font-family: "Noto Serif", Georgia, serif; }
+.hero .motto { font-family: "Noto Serif", Georgia, serif; font-style: italic; font-size: clamp(1.1rem, 2.6vw, 1.4rem); color: var(--text); margin: 0 auto 1.2rem; }
+.hero p { margin-inline: auto; }
+.hero .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.9rem; margin: 1.8rem 0 1rem; }
+.small { font-size: 0.85rem; color: var(--faint); }
+
+/* ---- buttons: the launcher's PLAY button (red gradient, light serif lettering) and its quiet secondary button ----------------- */
+.btn { display: inline-block; text-align: center; text-decoration: none; border-radius: 3px; padding: 0.8rem 1.6rem; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; font-size: 0.95rem; border: 1px solid var(--btn-border); background: var(--btn-base); color: var(--text); cursor: pointer; transition: background 0.16s, border-color 0.16s, box-shadow 0.16s; }
+.btn:hover { background: var(--btn-hover); border-color: var(--hover-border); color: var(--text); }
+.btn.primary { color: #fbf3ea; border-color: var(--accent-hot); background: linear-gradient(180deg, var(--accent) 0%, var(--accent-deep) 100%); box-shadow: 0 0 26px var(--shadow); }
+.dl .btn.primary { display: block; }
+.btn.primary:hover { background: linear-gradient(180deg, var(--hover-hi) 0%, var(--hover-lo) 100%); border-color: var(--hover-border); color: #fbf3ea; }
+
+/* copyable shell commands: the command box and the quiet launcher-style button beside it */
+.cmd { display: flex; gap: 0.5rem; align-items: stretch; margin: 0.4rem 0 0.9rem; }
+.cmd pre { flex: 1; min-width: 0; margin: 0; }
+.copy { flex: none; cursor: pointer; font: inherit; font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text); background: var(--btn-base); border: 1px solid var(--btn-border); border-radius: 3px; padding: 0 0.9rem; min-width: 5.6rem; transition: background 0.12s, border-color 0.12s; }
+.copy:hover { background: var(--btn-hover); border-color: var(--hover-border); }
+
+/* ---- cards --------------------------------------------------------------------------------------------------------- */
+.grid { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); margin-block: 1.3rem; }
+.card { background: var(--card); border: 1px solid var(--card-line); border-radius: 4px; padding: 1.3rem 1.4rem; }
+.card h3 { margin-bottom: 0.7rem; display: flex; align-items: center; gap: 0.55rem; font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif; font-size: 0.72rem; letter-spacing: 0.24em; text-transform: uppercase; color: var(--dim); }
+.card h3::before { content: ""; flex: none; width: 3px; height: 14px; background: var(--accent); }
+.sub-h { font-size: 1.15rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 2.2rem 0 0.9rem; }
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); }
+.card.wide { max-width: 52rem; }
+.story { max-width: 46rem; margin-bottom: 1.6rem; }
+.story .lead { font-family: "Noto Serif", Georgia, serif; font-size: 1.3rem; }
+.card p:last-child, .card ul:last-child, .card ol:last-child { margin-bottom: 0; }
+.notice { border-left: 3px solid var(--ornament); background: var(--card); padding: 0.8rem 1rem; color: var(--dim); max-width: 72ch; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+.legal { background: var(--card); border: 1px solid var(--card-line); border-radius: 4px; padding: 1.4rem 1.5rem; }
+
+.toast { position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%); z-index: 40; background: var(--card); border: 1px solid var(--warn); color: var(--text); border-radius: 4px; padding: 0.6rem 1rem; max-width: min(34rem, 92vw); font-size: 0.85rem; }
+
+footer { border-top: 1px solid var(--frame); padding-block: 2rem; color: var(--faint); font-size: 0.85rem; text-align: center; }
+footer p { margin-inline: auto; color: var(--faint); }
+
+/* ---- the first-visit faction choice ------------------------------------------------------------------------------------ */
+/* While it is open the page behind it (#page) is dark, blurred and inert (set in app.js); the dialog itself is lit with the faction colours. */
+body.gated { overflow: hidden; }
+#page { transition: filter 0.25s; }
+body.gated #page { filter: blur(10px) brightness(0.32) saturate(0.7); pointer-events: none; user-select: none; }
+.gate { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 1rem; background: radial-gradient(ellipse at center, rgba(3, 3, 5, 0.78), rgba(1, 1, 2, 0.95)); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); overflow-y: auto; }
+.gate.open { display: flex; }
+.gate-box { width: min(60rem, 100%); background: linear-gradient(180deg, var(--card) 0%, var(--bg-end) 100%); border: 1px solid var(--ornament); border-radius: 6px; padding: clamp(1.4rem, 4vw, 2.8rem); text-align: center; box-shadow: 0 0 0 1px var(--ink), 0 0 90px var(--shadow), 0 30px 80px rgba(0, 0, 0, 0.7); }
+.gate-box h2 { text-align: center; font-size: clamp(1.4rem, 3.4vw, 2rem); letter-spacing: 0.16em; }
+.gate-box h2::after { margin-inline: auto; width: 6rem; background: linear-gradient(90deg, transparent, var(--ornament), transparent); }
+.gate-box p { margin-inline: auto; color: var(--text); }
+.faction-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); margin-top: 1.6rem; }
+.faction { text-align: center; cursor: pointer; color: var(--text); background: linear-gradient(180deg, var(--card) 0%, var(--bg-end) 100%); border: 1px solid var(--accent); border-radius: 5px; padding: 1.6rem 1rem; font: inherit; transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s; box-shadow: 0 0 24px var(--shadow); }
+.faction:hover, .faction:focus-visible { border-color: var(--hover-border); box-shadow: 0 0 40px var(--shadow); transform: translateY(-2px); }
+.faction .sigil { display: block; width: 3.6rem; height: 3.6rem; margin: 0 auto 0.9rem; border-radius: 50%; border: 2px solid var(--ornament); background: radial-gradient(circle at 35% 30%, var(--accent-hot), var(--accent-deep) 70%); }
+.faction .name { display: block; font-family: "Noto Serif", Georgia, serif; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 0.4rem; }
+.faction .desc { display: block; color: var(--dim); font-size: 0.88rem; }
+
+@media (max-width: 640px) {
+  .site-header { position: static; }
+  html { scroll-padding-top: 1rem; }
+  section { padding-block: 2.2rem; }
+  nav.main { margin-left: 0; width: 100%; order: 3; }
+  .tools { margin-left: auto; }
+  .btn { padding: 0.75rem 1.1rem; letter-spacing: 0.1em; }
+  .cmd { flex-direction: column; }
+  .copy { padding: 0.5rem; }
+}
+@media print { #page { filter: none !important; } .site-header, .gate, .toast { display: none !important; } body { background: #fff; color: #000; } p, li { color: #222; } }
+#win-sha { word-break: break-all; display: inline-block; margin: 0.2rem 0; }
+.cmd pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.story .closing { font-family: "Noto Serif", Georgia, serif; font-style: italic; color: var(--text); margin-top: 1.2rem; }
+.legal h3 { margin-top: 1.6rem; }
+.noscript p { margin: 0 0 0.5rem; max-width: none; }
