@@ -39,6 +39,10 @@ ALLOWED_LINKS = re.compile(r"^https://github\.com/Glaubenskrieger/TSW-Forever(/|
 PLACEHOLDER = re.compile(r"\btodo\b(?! (lo|el|la))|\btbd\b|lorem|xxx|translate me|\?\?\?", re.I)
 
 
+def read_workflow(name):
+    return open(os.path.join(ROOT, ".github", "workflows", name), encoding="utf-8").read()
+
+
 def read(*p):
     with open(os.path.join(SITE, *p), encoding="utf-8") as f:
         return f.read()
@@ -589,6 +593,96 @@ class HarmonisedLayout(unittest.TestCase):
     def test_the_hero_buttons_are_equal_and_stacked_on_narrow_screens(self):
         self.assertIn(".hero .actions { flex-direction: column; align-items: center; }", self.css)
         self.assertIn(".hero .actions .btn { width: min(100%, 24rem); }", self.css)
+
+
+class SiteArtifactRoundTrip(unittest.TestCase):
+    """The first production deployment failed because the uploaded site artifact lacked `.nojekyll` (upload-artifact leaves dot files out unless include-hidden-files is true) although the
+    checksum list names it. The workflow now uploads with hidden files and downloads the artifact again to run the deployment's own checks; here the checks and the workflow are tested."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.art = os.path.join(self.tmp, "artifact")
+        pages.assemble(SITE, os.path.join(self.art, "site"))
+        site = os.path.join(self.art, "site")
+        subprocess.run("find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > ../SHA256SUMS-site", shell=True, cwd=site, check=True)  # the command of website.yml
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def downloaded(self, keep_hidden):
+        """What a download gives: every file of the artifact, or only the visible ones (the failure of 2026-11-21)."""
+        dest = os.path.join(self.tmp, "downloaded-" + ("all" if keep_hidden else "visible"))
+        if not os.path.exists(dest):
+            shutil.copytree(self.art, dest, ignore=None if keep_hidden else shutil.ignore_patterns(".*"))
+        return dest
+
+    def deployment_checks(self, folder):
+        """The checks of the deployment (build.yml, job site) and of the round trip: checksums, then the assembler's own rules."""
+        sums = subprocess.run(["sha256sum", "--check", "--strict", "../SHA256SUMS-site"], cwd=os.path.join(folder, "site"), capture_output=True, text=True)
+        rules = subprocess.run([sys.executable, "-I", os.path.join(HERE, "assemble_pages_site.py"), "--verify", os.path.join(folder, "site")], capture_output=True, text=True)
+        return sums, rules
+
+    def test_the_checksum_list_names_the_pages_marker(self):
+        self.assertIn("./.nojekyll", open(os.path.join(self.art, "SHA256SUMS-site"), encoding="utf-8").read())
+
+    def test_the_complete_downloaded_artifact_passes_the_deployment_checks(self):
+        sums, rules = self.deployment_checks(self.downloaded(keep_hidden=True))
+        self.assertEqual(sums.returncode, 0, sums.stdout + sums.stderr)
+        self.assertEqual(rules.returncode, 0, rules.stdout + rules.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(self.downloaded(keep_hidden=True), "site", ".nojekyll")))
+
+    def test_an_artifact_that_lost_its_dot_files_fails_both_checks(self):
+        folder = self.downloaded(keep_hidden=False)
+        self.assertFalse(os.path.exists(os.path.join(folder, "site", ".nojekyll")))
+        sums, rules = self.deployment_checks(folder)
+        self.assertNotEqual(sums.returncode, 0, "the checksum check must catch the missing marker")
+        self.assertIn(".nojekyll", sums.stdout + sums.stderr)
+        self.assertEqual(rules.returncode, 1)
+        self.assertIn(".nojekyll", rules.stderr)
+
+    def test_the_workflow_uploads_hidden_files_and_checks_the_downloaded_artifact_after_the_upload(self):
+        text = read_workflow("website.yml")
+        up = text.index("uses: actions/upload-artifact@")
+        block = text[up:text.index("- name:", up)]
+        self.assertIn("include-hidden-files: true", block)
+        after = text[text.index("- name:", up):]
+        self.assertIn("uses: actions/download-artifact@", after)
+        for need in ("sha256sum --check --strict ../SHA256SUMS-site", "assemble_pages_site.py --verify roundtrip/site", "test -f roundtrip/site/.nojekyll", 'cat roundtrip/COMMIT'):
+            self.assertIn(need, after)
+        # the deployment uploads its checked folder with the dot file as well
+        build = read_workflow("build.yml")
+        pages_up = build.index("uses: actions/upload-pages-artifact@")
+        self.assertIn("include-hidden-files: true", build[pages_up:build.index("- name:", pages_up) if "- name:" in build[pages_up:] else len(build)])
+
+    def test_the_preview_refuses_an_artifact_without_the_marker(self):
+        folder = self.downloaded(keep_hidden=False)
+        env = dict(os.environ, TSW_PREVIEW_BUILD=os.path.join(self.tmp, "build"), TSW_PREVIEW_PREPARE_ONLY="1")
+        r = subprocess.run(["bash", os.path.join(HERE, "website_preview.sh"), "--from-artifact", folder], capture_output=True, text=True, env=env, timeout=60)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "build", "site-preview", "TSW-Forever")))
+
+    def test_no_other_artifact_of_the_pipeline_holds_a_dot_file(self):
+        # upload-artifact leaves dot files out: the other artifacts (bundle, installer, archive, manifest, release files) must not rely on one
+        checked = 0
+        for name in ("flatpak-stable-build.yml", "windows.yml", "build.yml", "release.yml", "website.yml"):
+            lines = read_workflow(name).splitlines()
+            for i, line in enumerate(lines):
+                if "uses: actions/upload-artifact@" not in line:
+                    continue
+                j = i + 1
+                while j < len(lines) and not lines[j].lstrip().startswith("- name:") and not lines[j].lstrip().startswith("# "):
+                    if lines[j].strip().startswith("path:"):
+                        paths = [lines[j].split("path:", 1)[1].strip()]
+                        k = j + 1
+                        while k < len(lines) and (lines[k].startswith(" " * 12) and not re.match(r"\s+[a-z][a-z-]*:", lines[k])):
+                            paths.append(lines[k].strip())
+                            k += 1
+                        for path in filter(None, paths):
+                            checked += 1
+                            if name != "website.yml":
+                                self.assertFalse(re.search(r"(^|/)\.[^/\s]", path.replace("|", "")), f"{name}: an artifact path with a dot file: {path}")
+                    j += 1
+        self.assertGreaterEqual(checked, 8, "the scan must have found the artifact paths")
 
 
 class StagingPreview(unittest.TestCase):

@@ -708,6 +708,8 @@ def check_ci_policy(workflows, manifest):
                 if PRODUCTION_REPO_GUARD not in str(site.get("if", "")):
                     errs.append("build.yml: the site is deployed from the production repository only (a test or development repository must never deploy GitHub Pages)")
                 stext = repr(site)
+                if not any("upload-pages-artifact" in str(st.get("uses", "")) and (st.get("with") or {}).get("include-hidden-files") is True for st in site.get("steps") or []):
+                    errs.append("build.yml: the Pages upload needs include-hidden-files: true (the checked folder contains .nojekyll)")
                 for need, why in (("download-artifact", "deploy the artifact that the web site build kept (the same bytes that were tested)"), ("sha256sum --check", "check the checksums of that artifact"),
                                   ("assemble_pages_site.py --verify", "check the artifact with the assembler's own rules"), ("git ls-remote", "deploy only the tip of main"), ("deploy-pages", "deploy")):
                     if need not in stext:
@@ -742,6 +744,21 @@ def check_ci_policy(workflows, manifest):
             for jname, job in (doc.get("jobs") or {}).items():
                 if any(v == "write" for v in _perms(job).values()):
                     errs.append(f"website.yml: job {jname} must not have write permissions")
+                # The artifact holds a dot file (.nojekyll): upload-artifact leaves dot files out unless include-hidden-files is true, which broke the first production deployment. The upload must
+                # include them, and the artifact must be downloaded again and checked like the deployment checks it, AFTER the upload.
+                steps = job.get("steps") or []
+                ups = [i for i, st in enumerate(steps) if "upload-artifact" in str(st.get("uses", ""))]
+                for i in ups:
+                    if (steps[i].get("with") or {}).get("name") != "tsw-forever-site-${{ github.sha }}":
+                        errs.append("website.yml: the site artifact is named tsw-forever-site-${{ github.sha }} (after the commit)")
+                    if (steps[i].get("with") or {}).get("include-hidden-files") is not True:
+                        errs.append("website.yml: the upload of the site artifact needs include-hidden-files: true (.nojekyll is a dot file and would be left out)")
+                after = steps[ups[0] + 1:] if ups else []
+                if not any("download-artifact" in str(st.get("uses", "")) and "github.sha" in str((st.get("with") or {}).get("name", "")) for st in after):
+                    errs.append("website.yml: after the upload the artifact must be downloaded again (named after the commit) for the round-trip check")
+                for need in ("sha256sum --check", "assemble_pages_site.py --verify", ".nojekyll"):
+                    if not any(need in str(st.get("run", "")) for st in after):
+                        errs.append(f"website.yml: the round-trip check after the upload must run {need!r}")
             errs += _pinned_actions(name, doc)
         elif name == "release-rehearsal.yml":
             # THE READ-ONLY REHEARSAL: the same scripts as release.yml, nothing is created, published or uploaded

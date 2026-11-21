@@ -787,6 +787,24 @@ class StagingAndRehearsalPolicy(unittest.TestCase):
                         st["run"] = st["run"].replace(needle, "true")
             self.assertTrue(self.errs(drop), needle)
         self.assertTrue(self.errs(lambda w: [st.update({"uses": "actions/upload-artifact@v4"}) for st in job(w)["steps"] if "upload-artifact" in str(st.get("uses", ""))]))
+        # the 0.4.1 deployment failed because the upload left out the dot file .nojekyll: the upload must include hidden files, and the artifact is downloaded and checked again after it
+        self.assertTrue(self.errs(lambda w: [st["with"].pop("include-hidden-files") for st in job(w)["steps"] if "upload-artifact" in str(st.get("uses", ""))]))
+        self.assertTrue(self.errs(lambda w: [st["with"].update({"include-hidden-files": False}) for st in job(w)["steps"] if "upload-artifact" in str(st.get("uses", ""))]))
+        self.assertTrue(self.errs(lambda w: job(w)["steps"].remove(next(st for st in job(w)["steps"] if "download-artifact" in str(st.get("uses", ""))))))
+        for needle in ("sha256sum --check", "assemble_pages_site.py --verify", ".nojekyll"):
+            def drop(w, needle=needle):
+                for st in job(w)["steps"]:
+                    if needle in str(st.get("run", "")):
+                        st["run"] = st["run"].replace(needle, "true")
+            self.assertTrue(self.errs(drop), needle)
+        # a round trip that stands BEFORE the upload proves nothing
+        def move_before(w):
+            steps = job(w)["steps"]
+            up = next(i for i, st in enumerate(steps) if "upload-artifact" in str(st.get("uses", "")))
+            steps[:] = steps[up + 1:] + steps[:up + 1]
+        self.assertTrue(self.errs(move_before))
+        # the production deployment uploads the checked folder to Pages with its dot file
+        self.assertTrue(self.errs(lambda w: [st["with"].pop("include-hidden-files") for st in w["build.yml"]["jobs"]["site"]["steps"] if "upload-pages-artifact" in str(st.get("uses", ""))]))
         self.assertTrue(self.errs(lambda w: [st.get("with", {}).update({"name": "site"}) for st in job(w)["steps"] if "upload-artifact" in str(st.get("uses", ""))]))
 
     def test_the_rehearsal_is_read_only_and_runs_the_release_scripts(self):

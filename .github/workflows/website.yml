@@ -53,10 +53,28 @@ jobs:
           python3 -I scripts/assemble_pages_site.py --verify build/site-artifact/site
           (cd build/site-artifact/site && sha256sum --check --strict ../SHA256SUMS-site)
 
+      # `.nojekyll` is a dot file and upload-artifact leaves dot files out unless it is told otherwise: without `include-hidden-files` the artifact lacks a file that is in its own checksum list.
       - name: Keep the assembled site (the exact Pages content)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tsw-forever-site-${{ github.sha }}
           path: build/site-artifact/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+
+      # The round trip, in development and in production: the artifact is downloaded again and checked exactly as the production deployment checks it (build.yml, job `site`).
+      # A file that the upload left out, or any changed byte, fails here - not only on the day of a deployment.
+      - name: Download the kept artifact again and check it like the deployment does
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tsw-forever-site-${{ github.sha }}
+          path: roundtrip
+
+      - name: Check the downloaded artifact (commit, checksums, the assembler's rules, the Pages marker)
+        run: |
+          set -euo pipefail
+          test "$(cat roundtrip/COMMIT)" = "$GITHUB_SHA" || { echo "the site artifact was built for another commit" >&2; exit 1; }
+          (cd roundtrip/site && sha256sum --check --strict ../SHA256SUMS-site)
+          python3 -I scripts/assemble_pages_site.py --verify roundtrip/site
+          test -f roundtrip/site/.nojekyll || { echo "the downloaded artifact lacks .nojekyll" >&2; exit 1; }
