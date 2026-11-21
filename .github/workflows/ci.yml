@@ -33,6 +33,9 @@ env:
 
 jobs:
   checks:
+    # In the production repository ci runs on every push. In the development repository it does NOT run on a plain push (build.yml already runs the same tests there, and the free quota must not
+    # be spent twice); a manual start and pull requests run the full ci there. Same tests, different trigger only. The jobs below need `checks` and are skipped with it.
+    if: ${{ github.repository == 'Glaubenskrieger/TSW-Forever' || github.event_name != 'push' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:

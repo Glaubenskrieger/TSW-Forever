@@ -79,5 +79,47 @@ class Site(unittest.TestCase):
         self.assertEqual(pages.main(["--website", self.web, "--out", self.out]), 1, "the output folder is no longer empty")
 
 
+class VerifyAssembled(unittest.TestCase):
+    """--verify: the production deployment checks the artifact of the web site build with the assembler's own rules."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.site = os.path.join(self.tmp, "site")
+        pages.assemble(os.path.join(ROOT, "website"), self.site)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_an_assembled_site_is_verified(self):
+        self.assertGreater(pages.check_website(self.site, assembled=True), 0)
+        self.assertEqual(pages.main(["--verify", self.site]), 0)
+
+    def test_the_marker_is_required_and_must_be_empty(self):
+        os.remove(os.path.join(self.site, ".nojekyll"))
+        with self.assertRaises(pages.SiteError):
+            pages.check_website(self.site, assembled=True)
+        with open(os.path.join(self.site, ".nojekyll"), "w") as f:
+            f.write("x")
+        with self.assertRaises(pages.SiteError):
+            pages.check_website(self.site, assembled=True)
+
+    def test_the_same_forbidden_files_are_refused_in_an_assembled_site(self):
+        for rel in ("setup.exe", "x.flatpak", "SHA256SUMS", "tsw-forever-0.4.1-src.tar.gz", "repo/summary", "key.gpg", ".secret", "x.bin"):
+            with self.subTest(rel):
+                p = os.path.join(self.site, rel)
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "w") as f:
+                    f.write("x")
+                self.assertEqual(pages.main(["--verify", self.site]), 1)
+                os.remove(p)
+                if os.path.dirname(p) != self.site:
+                    os.rmdir(os.path.dirname(p))
+
+    def test_a_plain_website_folder_is_not_an_assembled_site_and_verify_stands_alone(self):
+        self.assertEqual(pages.main(["--verify", os.path.join(ROOT, "website")]), 1, "the source folder has no .nojekyll")
+        with self.assertRaises(SystemExit):
+            pages.main(["--verify", self.site, "--out", self.tmp])
+
+
 if __name__ == "__main__":
     unittest.main()

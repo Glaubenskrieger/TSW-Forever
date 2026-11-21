@@ -120,7 +120,7 @@ A working normal installation does not need manual compiler-profile changes. Avo
 
 ## 5. Manual updates
 
-**The launcher does not update itself, and there is no update source to set up.** Since 0.4.1 Linux and Windows behave the same: when a newer stable version exists, the launcher shows a notice with a button that opens the download area of the official web site (https://glaubenskrieger.github.io/TSW-Forever/) for your system. Download the new file there, check it as above and install it. Nothing is downloaded or installed by the launcher, and no administrator password is needed for the notice. (On Windows see section 2a.)
+**The launcher checks for a newer version, but it never installs one: there is no automatic download, no automatic installation and no update source to set up.** Since 0.4.1 Linux and Windows behave the same. At each start the launcher asks GitHub, with one plain HTTPS request (headers only, version number only), whether a newer stable version has been published. If there is one, it shows a notice with a button that opens the download area of the official web site (https://glaubenskrieger.github.io/TSW-Forever/) for your system. You then download the new file there, check it as above and install it yourself, when you choose. Nothing is downloaded or installed by the launcher, and no administrator password is needed for the notice. Without an internet connection no notice appears; a build you compiled yourself and, on Linux, a run outside the released Flatpak show none either. (On Windows see section 2a.)
 
 On Linux, install the newer bundle the same way as the first one, over the old one. Close the game and the launcher first. Your settings and your game folder are kept, because the application ID `org.tswlauncher.Launcher` and the user installation stay the same:
 
@@ -171,6 +171,8 @@ flatpak install --user flathub org.freedesktop.Platform//25.08 org.freedesktop.P
 
 For AMD/Intel Mesa graphics, check that the 32-bit extension from the installation section is installed. NVIDIA needs extensions matching the active NVIDIA driver; do not substitute the Mesa command as a universal NVIDIA fix. Use your distribution's supported driver setup and report the exact error if unsure. To update installed user runtimes and driver extensions:
 
+`flatpak update` updates the Flatpak **runtimes and extensions**, not the launcher (a newer launcher is installed by hand, see section 5):
+
 ```sh
 flatpak update --user
 ```
@@ -179,9 +181,7 @@ The owner confirmed installation and game start on one Steam Machine with a prec
 
 ### Report a problem
 
-Use the [project issue tracker](https://github.com/Glaubenskrieger/TSW-Forever/issues). If it is not available yet, contact the person who provided your test build.
-
-Include the launcher version, distribution/SteamOS version, desktop/session, GPU/driver, installation method, steps to reproduce and exact error. The following prints the installed launcher version:
+Collect the launcher version, distribution/SteamOS version, desktop/session, GPU/driver, installation method, steps to reproduce and the exact error before you contact the maintainer. Share only a personally reviewed, reduced diagnostic package. The following prints the installed launcher version:
 
 ```sh
 flatpak run --user --command=tsw-launch org.tswlauncher.Launcher --version

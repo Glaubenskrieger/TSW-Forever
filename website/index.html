@@ -55,7 +55,7 @@
       <div class="rule" aria-hidden="true"></div>
       <div class="sub">Forever</div>
       <p class="motto" data-i18n="hero.motto">Some worlds you don't leave behind.</p>
-      <p class="lead" data-i18n="hero.lead">A free, unofficial launcher for the original The Secret World (2012) on Linux, SteamOS and Windows. It helps you set up the game and remembers your display settings.</p>
+      <p class="hero-lead" data-i18n="hero.lead">A free, unofficial launcher for the original The Secret World (2012) on Linux, SteamOS and Windows. It helps you set up the game and remembers your display settings.</p>
       <div class="actions">
         <a class="btn primary js-dl-windows" href="https://github.com/Glaubenskrieger/TSW-Forever/releases" rel="noopener" data-i18n="dl.win.button">Download Windows installer</a>
         <a class="btn js-dl-linux" href="https://github.com/Glaubenskrieger/TSW-Forever/releases" rel="noopener" data-i18n="dl.linux.button">Download Flatpak</a>
@@ -68,13 +68,12 @@
     <div class="wrap">
       <h2 data-i18n="why.title">Why TSW-Forever?</h2>
       <div class="story">
-        <p class="lead" data-i18n="why.p1">The Secret World is more than just a game to me.</p>
-        <p data-i18n="why.p2">It is a world full of secrets, unusual stories and an atmosphere that is still unmatched.</p>
-        <p data-i18n="why.p3">This universe has stayed with me since 2012. And even though time moves on, there are worlds you want to return to again and again.</p>
-        <p data-i18n="why.p4">TSW-Forever is my contribution to preserving the original The Secret World and keeping it accessible on modern systems.</p>
-        <p class="closing" data-i18n="why.p5">Not to reinvent it. But so that the original can remain what it is.</p>
+        <p class="story-lead" data-i18n="why.p1">Some worlds never let you go.</p>
+        <p data-i18n="why.p2">The Secret World is one of them for me. Since 2012, its secrets, its stories and its unmistakable atmosphere have stayed with me.</p>
+        <p data-i18n="why.p3">TSW-Forever is my contribution to keeping this world alive on modern systems – without changing the original.</p>
+        <p class="closing" data-i18n="why.p4">Not to reinvent it. But so that the original can remain what it is.</p>
       </div>
-      <div class="grid">
+      <div class="grid three">
         <div class="card"><h3 data-i18n="why.preserve.title">Keeping the original</h3><p data-i18n="why.preserve.body">The launcher sets up the game you own and starts it. TSW-Forever contains no game files and does not replace any original game content with files of its own.</p></div>
         <div class="card"><h3 data-i18n="why.systems.title">Modern systems</h3><p data-i18n="why.systems.body">It takes care of the technical side so that the original runs on current Linux, SteamOS and Windows 10/11 installations.</p></div>
         <div class="card"><h3 data-i18n="why.legends.title">Not Secret World Legends</h3><p data-i18n="why.legends.body">This project is about the original game of 2012. It has nothing to do with Secret World Legends and offers no servers of its own.</p></div>
@@ -85,7 +84,7 @@
   <section id="features">
     <div class="wrap">
       <h2 data-i18n="features.title">What it does</h2>
-      <div class="grid">
+      <div class="grid three">
         <div class="card"><h3 data-i18n="features.install.title">Installs the game</h3><p data-i18n="features.install.body">Guides you through setting up the original game: through the download of the official Funcom installer (checked against a fixed SHA-256 checksum), through an installer you already have, or through an existing installation. On Windows the game runs natively, on Linux through Wine/Proton.</p></div>
         <div class="card"><h3 data-i18n="features.settings.title">Remembers your display settings</h3><p data-i18n="features.settings.body">The game resolution you choose is kept between starts. On Linux, an adjustable frame-rate limit comes on top.</p></div>
         <div class="card"><h3 data-i18n="features.languages.title">Six languages, four themes</h3><p data-i18n="features.languages.body">The launcher window speaks English, German, French, Spanish, Brazilian Portuguese and Polish, and comes in four colour themes: Templars, Illuminati, Dragon and a neutral one.</p></div>
@@ -97,7 +96,7 @@
     <div class="wrap">
       <h2 data-i18n="dl.title">Downloads</h2>
       <p data-i18n="dl.intro">Choose your system. Each button downloads the file of the newest published release on GitHub; the files come with SHA-256 checksums.</p>
-      <div class="grid two">
+      <div class="grid two dl-grid">
         <div class="card dl" id="download-linux">
           <h3 data-i18n="dl.linux.title">Linux and SteamOS</h3>
           <p data-i18n="dl.linux.body">Flatpak bundle for x86-64 computers, including compatible SteamOS devices (in Desktop Mode). One file that you install with Flatpak, for your user.</p>
@@ -113,6 +112,7 @@
           <p class="small" id="windows-sums" hidden><span data-i18n="dl.sha.label">SHA-256 of the file:</span> <code id="windows-sha"></code><br><a id="windows-sums-link" href="https://github.com/Glaubenskrieger/TSW-Forever/releases" rel="noopener" data-i18n="dl.sha.file">SHA256SUMS file of this release</a></p>
         </div>
       </div>
+      <p class="small"><a href="#updates" data-i18n="dl.update.hint">Already installed? See below how to update to a newer version.</a></p>
       <p class="small"><a class="all-releases" href="https://github.com/Glaubenskrieger/TSW-Forever/releases" rel="noopener" data-i18n="dl.all">View all versions on GitHub</a></p>
     </div>
   </section>
@@ -137,7 +137,7 @@
       <h3 class="sub-h" id="linux" data-i18n="linux.title">Linux and SteamOS (Flatpak)</h3>
       <p data-i18n="linux.req">TSW-Forever itself is a Linux application (Flatpak). The original Windows game runs on Linux through Wine/Proton; the launcher downloads the matching environment during setup, with your confirmation. Requirements: Flatpak on an x86-64 computer, a Vulkan-capable graphics driver with 32-bit support, and XWayland. Flathub only supplies the Flatpak runtimes here; TSW-Forever is not published there. On SteamOS, do this in Desktop Mode.</p>
       <div class="grid">
-        <div class="card">
+        <div class="card wide">
           <h3 data-i18n="linux.install.title">Install</h3>
           <p data-i18n="linux.verify.body">Check the download first: the SHA-256 value must match the one shown above or in SHA256SUMS.</p>
           <div class="cmd"><pre><code>sha256sum tsw-forever-*.flatpak</code></pre><button type="button" class="copy" data-copy data-i18n="ui.copy">Copy</button></div>
@@ -148,10 +148,43 @@
         </div>
       </div>
 
-      <h3 class="sub-h" data-i18n="updates.title">Updates</h3>
-      <div class="grid">
-        <div class="card"><h3 data-i18n="updates.win.title">Windows</h3><p data-i18n="updates.win.body">The launcher does not update itself. When a newer release exists, it shows a notice with a button that opens the Windows download on this page. Download the new installer and run it over the old one: your settings and your game folder are kept.</p></div>
-        <div class="card"><h3 data-i18n="updates.linux.title">Linux and SteamOS</h3><p data-i18n="updates.linux.body">The launcher does not update itself and there is no update source to set up. When a newer release exists, it shows a notice with a button that opens the Linux download on this page. Download the new bundle and install it the same way, over the old one: your settings and your game folder are kept.</p><div class="cmd"><pre><code>flatpak install --user ./tsw-forever-*.flatpak</code></pre><button type="button" class="copy" data-copy data-i18n="ui.copy">Copy</button></div></div>
+      <h3 class="sub-h" id="updates" data-i18n="updates.title">Updates</h3>
+      <p data-i18n="updates.intro">Every time you start it, TSW-Forever checks whether a newer version has been published. If there is one, the launcher shows a notice with a button that takes you to the matching download on this page. That is all it does: it never downloads or installs anything by itself. You decide whether and when you update.</p>
+      <p class="notice" data-i18n="updates.manual">Updating is always done by hand: you download the new file yourself and install it yourself. Your settings and your game folder are kept.</p>
+      <div class="grid two">
+        <div class="card" id="update-windows">
+          <h3 data-i18n="updates.win.title">Windows</h3>
+          <p data-i18n="updates.win.lead">Run the new installer over the old version. You do not need to uninstall anything first.</p>
+          <ol>
+            <li data-i18n="updates.win.s1">In the launcher notice, click "Open download page". Your browser opens this page at the Windows download. (Without the notice, simply go to Downloads at the top of this page.)</li>
+            <li data-i18n="updates.win.s2">Click "Download Windows installer" and wait until the file is saved, usually in your Downloads folder. If you like, check the SHA-256 value as described under Installation above.</li>
+            <li data-i18n="updates.win.s3">Double-click the downloaded file and confirm the Windows permission prompt. The installer recognises the existing installation and offers to update it; keep the suggested folder. If TSW-Forever is still open, the installer asks you to close it first.</li>
+            <li data-i18n="updates.win.s4">Start TSW-Forever from the Start menu. Your settings and your game folder are still there.</li>
+          </ol>
+        </div>
+        <div class="card" id="update-linux">
+          <h3 data-i18n="updates.linux.title">Linux and SteamOS</h3>
+          <p data-i18n="updates.linux.lead">Install the new bundle the same way as the first one, over the old version. You do not need to uninstall anything first.</p>
+          <ol>
+            <li data-i18n="updates.linux.s1">In the launcher notice, click "Open download page". Your browser opens this page at the Linux download. (Without the notice, simply go to Downloads at the top of this page.)</li>
+            <li data-i18n="updates.linux.s2">Click "Download Flatpak" and wait until the file is saved, usually in your Downloads folder. If you like, check the SHA-256 value as described under Installation above.</li>
+            <li data-i18n="updates.linux.s3">Close TSW-Forever, open a terminal in the folder with the downloaded file and run the command below. Replace the file name with the one you downloaded; it contains the version number.</li>
+          </ol>
+          <div class="cmd"><pre><code>flatpak install --user ./tsw-forever-X.Y.Z.flatpak</code></pre><button type="button" class="copy" data-copy data-i18n="ui.copy">Copy</button></div>
+          <ol start="4">
+            <li data-i18n="updates.linux.s4">Start TSW-Forever from your application menu. Your settings and your game folder are still there.</li>
+          </ol>
+          <p class="notice" data-i18n="updates.linux.warn">Install only a newer bundle than the one you have. Flatpak does not warn you if you install an older one: the installation then simply goes back to that older version.</p>
+        </div>
+      </div>
+
+      <h3 class="sub-h" data-i18n="updates.faq.title">Questions about updates</h3>
+      <div class="faq">
+        <details><summary data-i18n="updates.q1">How do I know that a new version exists?</summary><p data-i18n="updates.a1">When the launcher starts, it quickly asks GitHub which version was published last (it only reads the version number). If that version is newer than yours, a notice appears in the launcher window. You can also look at the Downloads section of this page at any time.</p></details>
+        <details><summary data-i18n="updates.q2">Does the launcher download or install anything by itself?</summary><p data-i18n="updates.a2">No. It only shows the notice. The button opens this web page in your browser; nothing is downloaded and nothing is installed until you do it yourself.</p></details>
+        <details><summary data-i18n="updates.q3">Do I have to update right away?</summary><p data-i18n="updates.a3">No. You can keep playing with your current version for as long as you like. The notice appears again at the next start, until you have installed the new version.</p></details>
+        <details><summary data-i18n="updates.q4">Will I lose my settings or my game?</summary><p data-i18n="updates.a4">No. The update replaces only the launcher. Your settings and the game folder with the original The Secret World stay where they are.</p></details>
+        <details><summary data-i18n="updates.q5">I see no notice, although a new version exists. Why?</summary><p data-i18n="updates.a5">The launcher needs an internet connection at start, and only the official stable version shows the notice. In that case, just look at the Downloads section of this page: the buttons always offer the newest published version.</p></details>
       </div>
     </div>
   </section>
@@ -166,7 +199,6 @@
         <li><a href="https://github.com/Glaubenskrieger/TSW-Forever#7-troubleshooting-and-known-limitations" rel="noopener" data-i18n="docs.trouble">Troubleshooting and known limitations</a></li>
         <li><a href="https://github.com/Glaubenskrieger/TSW-Forever/blob/main/documentation/building-from-source.md" rel="noopener" data-i18n="docs.build">Building from source</a></li>
         <li><a href="https://github.com/Glaubenskrieger/TSW-Forever/blob/main/CHANGELOG.md" rel="noopener" data-i18n="docs.changelog">Changelog</a></li>
-        <li><a href="https://github.com/Glaubenskrieger/TSW-Forever/issues" rel="noopener" data-i18n="docs.issues">Report a problem</a></li>
       </ul>
     </div>
   </section>

@@ -25,7 +25,6 @@
     <p xml:lang="pl">Launcher nie zawiera danych gry. Oryginalny instalator jest pobierany wyłącznie za Twoją wyraźną zgodą i tylko wtedy, gdy znana jest jego suma kontrolna; możesz też użyć instalatora pozyskanego samodzielnie albo istniejącej instalacji.</p>
   </description>
   <url type="homepage">https://github.com/Glaubenskrieger/TSW-Forever</url>
-  <url type="bugtracker">https://github.com/Glaubenskrieger/TSW-Forever/issues</url>
   <developer id="io.github.glaubenskrieger">
     <name>TSW-Forever</name>
   </developer>

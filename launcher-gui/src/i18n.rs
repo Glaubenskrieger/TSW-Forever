@@ -648,12 +648,18 @@ mod tests {
         out
     }
 
+    /// A Windows checkout may hold the sources with CRLF line endings (`include_str!` embeds them unchanged); the multi-line search patterns below need LF.
+    fn lf(text: &str) -> String {
+        text.replace("\r\n", "\n")
+    }
+
     /// All message ids the program can show, collected from its sources and from the library's own tables.
     fn all_message_ids() -> std::collections::BTreeSet<String> {
         let mut ids = std::collections::BTreeSet::new();
         let rust = [include_str!("main.rs"), include_str!("model.rs"), include_str!("messages.rs")];
         for src in rust {
             // the unit-test modules use ids only to exercise the machinery
+            let src = lf(src);
             let code = src.split("#[cfg(test)]\nmod tests").next().unwrap();
             for open in ["Msg::plain(\"", "Msg::new(\"", "Msg { id: \"", " m(\"", "(m(\""] {
                 ids.extend(literals_after(code, open));
@@ -666,7 +672,8 @@ mod tests {
         ids.extend(literals_after(include_str!("../../launcher/src/prefix.rs"), "step(Phase::Installing, \""));
         ids.extend(literals_after(include_str!("../../launcher/src/prefix.rs"), "step(Phase::Verifying, \""));
         ids.extend(literals_after(include_str!("../../launcher/src/prefix.rs"), "step: \""));
-        let themes = include_str!("theme.rs").split("#[cfg(test)]\nmod tests").next().unwrap();
+        let theme_src = lf(include_str!("theme.rs"));
+        let themes = theme_src.split("#[cfg(test)]\nmod tests").next().unwrap();
         ids.extend(literals_after(themes, "name: \""));
         ids.extend(literals_after(themes, "description: \""));
         ids.extend(tsw_launch::doctor::X11_LIBS.iter().map(|(_, _, why)| why.to_string()));

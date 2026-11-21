@@ -129,7 +129,7 @@ jobs:
           name: tsw-forever-${{ steps.version.outputs.version }}-flatpak-${{ github.sha }}
           path: build/flatpak-out/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ github.repository == 'Glaubenskrieger/TSW-Forever' && 30 || 7 }}
       - name: Free the disk space of the Flatpak build (the bundle is exported and audited; the Platform runtime is not needed any more)
         run: |
           scripts/ci_disk_report.sh "5 after the Flatpak build and bundle, before cleanup 2"
@@ -178,7 +178,7 @@ jobs:
           name: tsw-forever-${{ steps.version.outputs.version }}-source-${{ github.sha }}
           path: build/source-out/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ github.repository == 'Glaubenskrieger/TSW-Forever' && 30 || 7 }}
       - name: Disk report - end of the job (also after a failure)
         if: ${{ always() }}
         run: scripts/ci_disk_report.sh "9 end of the job"

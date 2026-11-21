@@ -5,8 +5,10 @@ Since 0.4.1 GitHub Pages carries the web site only. The installation files (Flat
 them at runtime. No Flatpak/OSTree repository, no install file for a Flatpak remote and no release file is ever put on Pages, so the Pages artifact is small and independent of any release.
 
   assemble_pages_site.py --website <folder> --out <new folder>
+  assemble_pages_site.py --verify <assembled folder>
 
-Copies the web site into the new folder, adds `.nojekyll` and checks the result. Refuses: a missing web site or one without index.html, a non-empty output folder, symbolic links,
+Copies the web site into the new folder, adds `.nojekyll` and checks the result. `--verify` runs the SAME checks on an already assembled site (what the production deployment does with the
+artifact that the web site build kept, so the deployed bytes are checked by the same code that assembled them) and needs the marker `.nojekyll` in it. Refuses: a missing web site or one without index.html, a non-empty output folder, symbolic links,
 any installation or repository file inside the web site (see FORBIDDEN_*), a file that is not plain web content, and a result above SIZE_LIMIT. Writes only below --out. Exit 0 = assembled.
 """
 import argparse
@@ -36,8 +38,8 @@ def _walk(root):
         yield d, dirs, files
 
 
-def check_website(website):
-    """Refuse anything that is not plain static web content; returns the total size."""
+def check_website(website, assembled=False):
+    """Refuse anything that is not plain static web content; returns the total size. `assembled`: the folder is the result of assemble() and must carry the empty marker `.nojekyll` (and only that dot file)."""
     if website is None or not os.path.isdir(website):
         raise SiteError("the web site folder is missing")
     if not os.path.isfile(os.path.join(website, "index.html")):
@@ -50,6 +52,10 @@ def check_website(website):
         for n in files:
             rel = os.path.relpath(os.path.join(d, n), website)
             low = n.lower()
+            if assembled and rel == ".nojekyll":
+                if os.path.getsize(os.path.join(d, n)) != 0:
+                    raise SiteError(".nojekyll must be empty")
+                continue
             if n in FORBIDDEN_NAMES or low.endswith(FORBIDDEN_SUFFIXES) or n.startswith("."):
                 raise SiteError(f"an installation or repository file is not part of the web site: {rel}")
             if not low.endswith(ALLOWED_SUFFIXES):
@@ -60,6 +66,8 @@ def check_website(website):
             total += size
     if total > SIZE_LIMIT:
         raise SiteError(f"the web site is {total} bytes: more than {SIZE_LIMIT}")
+    if assembled and not os.path.isfile(os.path.join(website, ".nojekyll")):
+        raise SiteError("an assembled site carries the marker .nojekyll")
     return total
 
 
@@ -75,9 +83,22 @@ def assemble(website, out):
 
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--website", required=True)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--website")
+    ap.add_argument("--out")
+    ap.add_argument("--verify", help="check an already assembled site with the same rules (no output)")
     a = ap.parse_args(argv)
+    if a.verify:
+        if a.website or a.out:
+            ap.error("--verify stands alone")
+        try:
+            total = check_website(a.verify, assembled=True)
+        except (SiteError, OSError) as e:
+            print(f"assemble_pages_site: {e}", file=sys.stderr)
+            return 1
+        print(f"site verified: {a.verify} ({total} bytes, web site only)")
+        return 0
+    if not a.website or not a.out:
+        ap.error("--website and --out are needed (or --verify)")
     try:
         total = assemble(a.website, a.out)
     except (SiteError, OSError) as e:

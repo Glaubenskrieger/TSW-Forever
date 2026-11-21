@@ -36,7 +36,7 @@ env:
 jobs:
   windows:
     if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 90
     outputs:
       artifact: ${{ steps.names.outputs.artifact }}
@@ -150,4 +150,4 @@ jobs:
             build/windows/tsw-forever-*-windows-setup.exe
             build/windows/SHA256SUMS-windows
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ github.repository == 'Glaubenskrieger/TSW-Forever' && 30 || 7 }}

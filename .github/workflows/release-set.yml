@@ -109,4 +109,4 @@ jobs:
           name: ${{ steps.version.outputs.artifact }}
           path: build/release-set/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ github.repository == 'Glaubenskrieger/TSW-Forever' && 30 || 7 }}

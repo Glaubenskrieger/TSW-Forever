@@ -3,6 +3,7 @@
 #
 #   scripts/build_flatpak.sh fetch     cargo fetch --locked for the tests on a machine with an empty cargo cache   (NEEDS NETWORK)
 #   scripts/build_flatpak.sh test      unit tests of the launcher (offline) + policy tests            (needs cargo, python3)
+#   (scripts/test_crlf_checkout.sh     the Rust tests on a CRLF copy of the tree = a Windows checkout; run it before a push, see AGENTS.md)
 #   scripts/build_flatpak.sh stage     copy ONLY the launcher sources into build/flatpak/src            (needs rsync; TSW_RELEASE_BUILD=1 marks the tree as a RELEASE build)
 #   scripts/build_flatpak.sh check     stage + validate manifest, desktop file, metainfo, staged tree (no network, no flatpak)
 #   scripts/build_flatpak.sh vendor    cargo vendor from the committed Cargo.lock into build/flatpak/src/vendor   (NEEDS NETWORK)
@@ -80,6 +81,10 @@ cmd_test() {
   python3 -I "$root/scripts/test_install_native.py"
   python3 -I "$root/scripts/test_native_stage.py"
   python3 -I "$root/scripts/test_distribution_policy.py"
+  python3 -I "$root/scripts/test_source_line_endings.py"
+  python3 -I "$root/scripts/test_update_documentation.py"
+  python3 -I -W ignore "$root/scripts/test_release_scripts.py"
+  private_only_test test_export_public.py
   python3 -I "$root/scripts/test_ci_disk_report.py"
 }
 

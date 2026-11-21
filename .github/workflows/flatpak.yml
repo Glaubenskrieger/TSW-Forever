@@ -94,4 +94,4 @@ jobs:
             build/flatpak/tsw-launcher.flatpak
             build/flatpak/tsw-launcher.flatpak.sha256
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ github.repository == 'Glaubenskrieger/TSW-Forever' && 30 || 7 }}

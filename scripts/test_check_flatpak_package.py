@@ -12,6 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)  # -I drops the script directory from the path
 import check_flatpak_package as c  # noqa: E402
 
+ROOT = os.path.abspath(os.path.join(HERE, ".."))
 MANIFEST = os.path.join(HERE, "..", "packaging", "flatpak", "org.tswlauncher.Launcher.json")
 
 
@@ -218,15 +219,29 @@ class MainOnlyPolicy(unittest.TestCase):
         # the web site: independent of the builds, only for a push to main, shared concurrency, tests before it goes live, tip of main only, and the web site ALONE
         self.assertTrue(self.errs(lambda w: job(w, "site").update({"needs": "candidate"})))
         self.assertTrue(self.errs(lambda w: job(w, "site").update({"if": "${{ github.ref == 'refs/heads/main' }}"})))
+        site_guard = "github.repository == 'Glaubenskrieger/TSW-Forever' && "  # the development repository must never deploy GitHub Pages
+        self.assertIn(site_guard, job(self.wf, "site")["if"])
+        self.assertTrue(self.errs(lambda w: job(w, "site").update({"if": job(w, "site")["if"].replace(site_guard, "")})))
+        self.assertTrue(self.errs(lambda w: job(w, "site").update({"if": job(w, "site")["if"].replace("Glaubenskrieger/TSW-Forever", "someone/else")})))
         self.assertTrue(self.errs(lambda w: job(w, "site").pop("concurrency")))
         self.assertTrue(self.errs(lambda w: job(w, "site")["concurrency"].update({"cancel-in-progress": True})))
         self.assertTrue(self.errs(lambda w: job(w, "site").update({"permissions": {"contents": "write", "pages": "write", "id-token": "write"}})))
-        for needle in ("assemble_pages_site.py --website website", "test_website.py", "git ls-remote"):
+        for needle in ("sha256sum --check", "assemble_pages_site.py --verify", "git ls-remote"):
             def drop(w, needle=needle):
                 for st in job(w, "site")["steps"]:
                     if "run" in st:
                         st["run"] = st["run"].replace(needle, "true")
             self.assertTrue(self.errs(drop), needle)
+        # the web site is built once, by the shared website.yml, and deployed from exactly that artifact: after the web site build only, never after the other builds
+        self.assertTrue(self.errs(lambda w: job(w, "site").pop("needs")))
+        self.assertTrue(self.errs(lambda w: job(w, "site").update({"needs": ["site-build", "flatpak"]})))
+        self.assertTrue(self.errs(lambda w: job(w, "site").update({"needs": "windows"})))
+        self.assertTrue(self.errs(lambda w: job(w, "site-build").update({"uses": "./.github/workflows/windows.yml"})))
+        self.assertTrue(self.errs(lambda w: job(w, "site-build").update({"needs": "flatpak"})))
+        self.assertTrue(self.errs(lambda w: job(w, "site-build").update({"permissions": {"contents": "write"}})))
+        self.assertTrue(self.errs(lambda w: job(w, "site")["steps"].remove(next(st for st in job(w, "site")["steps"] if "download-artifact" in str(st.get("uses", ""))))))
+        # artifact retention: the production value is 30 days, the development repository keeps 7; nothing else
+        self.assertTrue(self.errs(lambda w: [st.get("with", {}).update({"retention-days": 90}) for st in job(w, "candidate")["steps"] if "upload-artifact" in str(st.get("uses", ""))]))
         for extra in ("python3 -I scripts/assemble_pages_site.py --repo build/flatpak/repo --refs r --out o", "cp build/flatpak/repo build/site/repo", "curl -o build/site/channels.json x", "cp x.flatpak build/site/",
                       "python3 -I scripts/preserve_live_site.py --site s --out o", "cp tsw-forever.flatpakrepo build/site/"):
             self.assertTrue(self.errs(lambda w, extra=extra: job(w, "site")["steps"].append({"run": extra})), extra)
@@ -257,6 +272,12 @@ class MainOnlyPolicy(unittest.TestCase):
         for n in w_jobs(self.wf):
             self.assertTrue(self.errs(lambda w, n=n: job(w, n).pop("if")), n)
             self.assertTrue(self.errs(lambda w, n=n: job(w, n).update({"if": "${{ github.ref_type == 'tag' }}"})), n)
+        # nothing public in another repository: the development repository (no environments, no Pages) must never publish, so EVERY release job and the Pages job carry the
+        # production-repository condition, and removing just that part from any of them is refused
+        guard = "github.repository == 'Glaubenskrieger/TSW-Forever' && "
+        for n in w_jobs(self.wf):
+            self.assertIn(guard, job(self.wf, n)["if"], n)
+            self.assertTrue(self.errs(lambda w, n=n: job(w, n).update({"if": job(w, n)["if"].replace(guard, "")})), n)
         # the chain that keeps everything public behind both approvals
         for n, dep in (("candidate", "guard"), ("approve", "candidate"), ("draft", "candidate"), ("draft", "approve"), ("publish", "draft")):
             self.assertTrue(self.errs(lambda w, n=n, dep=dep: job(w, n).update({"needs": [x for x in (job(w, n)["needs"] if isinstance(job(w, n)["needs"], list) else [job(w, n)["needs"]]) if x != dep]})), (n, dep))
@@ -282,7 +303,7 @@ class MainOnlyPolicy(unittest.TestCase):
         self.assertTrue(self.errs(lambda w: w["release.yml"]["jobs"].update({"flatpak": {"if": job(w, "guard")["if"], "needs": "guard", "uses": "./.github/workflows/flatpak-stable-build.yml"}})))
         self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "scripts/build_flatpak.sh bundle"})))
         self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "cargo build --release"})))
-        for needle in ("--workflow build.yml --commit", "--status success", "expired == false", "release_candidate.py verify", "run-id: "):
+        for needle in ("scripts/release_candidate_find.sh", "scripts/release_candidate_verify.sh", "run-id: "):
             def drop(w, needle=needle):
                 for st in job(w, "candidate")["steps"]:
                     for k in ("run", "with"):
@@ -308,9 +329,10 @@ class MainOnlyPolicy(unittest.TestCase):
         self.assertTrue(self.errs(lambda w: job(w, "publish")["steps"].append({"run": "echo ${{ github.ref_name }}"})))
         self.assertTrue(self.errs(drop_step("publish", "release_draft.sh publish")))
         # every check that stands between the build and the publication
-        for jn, needle in (("guard", "merge-base --is-ancestor"), ("guard", "pin_actions.sh --check"), ("guard", "version.py compare"), ("draft", "check_release_set.py"), ("draft", "check_public_source.py"),
-                           ("draft", "sha256sum -c SHA256SUMS-flatpak"), ("draft", "release_draft.sh upload")):
+        # (the checks themselves live in the shared scripts, which TestSharedReleaseScripts guards; the workflow must call them)
+        for jn, needle in (("guard", "scripts/release_guard.sh"), ("draft", "scripts/release_assemble_dist.sh"), ("draft", "scripts/release_notes.py"), ("draft", "release_draft.sh upload")):
             self.assertTrue(self.errs(drop_step(jn, needle)), (jn, needle))
+        self.assertTrue(self.errs(lambda w: job(w, "guard")["steps"][-1].update({"run": "scripts/release_guard.sh --rehearse"})), "a real release must not run the rehearsal mode")
         # only release.yml may react to a tag: every other workflow still must not
         self.assertTrue(self.errs(lambda w: on(w, "release-set.yml").update({"push": {"tags": ["v*"]}})))
         self.assertTrue(self.errs(lambda w: on(w, "windows.yml").update({"push": {"tags": ["v*"]}})))
@@ -553,7 +575,7 @@ class RcWorkflowPolicy(unittest.TestCase):
 
     def test_actions_are_pinned_artifacts_are_short_lived_and_tests_come_first(self):
         self.assertTrue(self.text_errs(lambda t: t.replace("actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9", "actions/upload-artifact@v4", 1)))
-        self.assertTrue(self.text_errs(lambda t: t.replace("retention-days: 30", "retention-days: 90", 1)))
+        self.assertTrue(self.text_errs(lambda t: t.replace(c.RETENTION_EXPR, "90", 1)))
         swapped = self.text.replace("scripts/build_flatpak.sh test", "@@T", 1).replace("run: scripts/build_flatpak.sh build", "run: scripts/build_flatpak.sh test", 1).replace("@@T", "scripts/build_flatpak.sh build", 1)
         self.assertTrue(c.check_rc_workflow(swapped, self.m))
         self.assertTrue(self.text_errs(lambda t: t.replace('FREEDESKTOP_VERSION: "25.08"', 'FREEDESKTOP_VERSION: "24.08"', 1)))
@@ -677,6 +699,183 @@ class TreePolicy(unittest.TestCase):
         d = self.tree(["a.rs"])
         os.symlink("/etc/passwd", os.path.join(d, "link"))
         self.assertTrue(any("symbolic link" in e for e in c.check_tree(d)))
+
+
+class TestSharedReleaseScripts(unittest.TestCase):
+    """release.yml and release-rehearsal.yml run the same scripts; they carry the checks and only read."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        self.dir = os.path.join(self.tmp, "scripts")
+        shutil.copytree(os.path.join(ROOT, "scripts"), self.dir, ignore=shutil.ignore_patterns("__pycache__"))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp)
+
+    def test_the_shipped_scripts_pass(self):
+        self.assertEqual(c.check_release_scripts(self.dir), [])
+
+    def test_a_script_that_lost_its_check_is_refused(self):
+        for name, needles in c.RELEASE_SCRIPT_NEEDS.items():
+            for needle in needles:
+                path = os.path.join(self.dir, name)
+                original = open(path, encoding="utf-8").read()
+                open(path, "w", encoding="utf-8").write(original.replace(needle, "x_removed_x"))
+                try:
+                    self.assertTrue(c.check_release_scripts(self.dir), (name, needle))
+                finally:
+                    open(path, "w", encoding="utf-8").write(original)
+
+    def test_a_script_that_could_publish_or_write_is_refused(self):
+        for name in c.RELEASE_SCRIPT_NEEDS:
+            for bad in ("gh release create v1 --draft", "gh release upload v1 f", "gh release edit v1 --draft=false", "git push origin main", "git tag v1", "scripts/release_draft.sh publish v1 d",
+                        "gh api -X POST repos/x/y/releases", "gh api --method DELETE repos/x/y", "echo ${{ secrets.X }}"):
+                path = os.path.join(self.dir, name)
+                original = open(path, encoding="utf-8").read()
+                open(path, "w", encoding="utf-8").write(original + "\n" + bad + "\n")
+                try:
+                    self.assertTrue(c.check_release_scripts(self.dir), (name, bad))
+                finally:
+                    open(path, "w", encoding="utf-8").write(original)
+
+    def test_a_missing_or_non_executable_script_is_refused(self):
+        import stat
+        path = os.path.join(self.dir, "release_guard.sh")
+        os.chmod(path, 0o644)
+        self.assertTrue(any("executable" in e for e in c.check_release_scripts(self.dir)))
+        os.chmod(path, 0o755)
+        os.remove(path)
+        self.assertTrue(any("missing" in e for e in c.check_release_scripts(self.dir)))
+
+
+class StagingAndRehearsalPolicy(unittest.TestCase):
+    """The web site build (website.yml), the read-only rehearsal, the development gate of ci.yml and the pinned Windows image."""
+
+    @classmethod
+    def setUpClass(cls):
+        import yaml
+        d = os.path.join(ROOT, ".github", "workflows")
+        cls.wf = {f: yaml.safe_load(open(os.path.join(d, f), encoding="utf-8")) for f in sorted(os.listdir(d)) if f.endswith(".yml")}
+        cls.m = json.load(open(os.path.join(ROOT, "packaging", "flatpak", "org.tswlauncher.Launcher.json")))
+
+    def errs(self, mutate):
+        w = copy.deepcopy(self.wf)
+        mutate(w)
+        return c.check_ci_policy(w, self.m)
+
+    def test_the_shipped_set_passes(self):
+        self.assertEqual(c.check_ci_policy(self.wf, self.m), [])
+
+    def test_website_yml_only_builds(self):
+        def job(w):
+            return w["website.yml"]["jobs"]["build"]
+        self.assertTrue(self.errs(lambda w: w.pop("website.yml")))
+        self.assertTrue(self.errs(lambda w: w["website.yml"].__setitem__("permissions", {"contents": "write"})))
+        self.assertTrue(self.errs(lambda w: job(w).update({"permissions": {"contents": "read", "pages": "write"}})))
+        self.assertTrue(self.errs(lambda w: job(w)["steps"].append({"uses": "actions/deploy-pages@" + "a" * 40})))
+        self.assertTrue(self.errs(lambda w: job(w)["steps"].append({"uses": "actions/upload-pages-artifact@" + "a" * 40})))
+        self.assertTrue(self.errs(lambda w: job(w).update({"environment": "github-pages"})))
+        self.assertTrue(self.errs(lambda w: job(w)["steps"].append({"run": "echo ${{ secrets.X }}"})))
+        self.assertTrue(self.errs(lambda w: w["website.yml"]["on"].update({"push": {"branches": ["main"]}}) if "on" in w["website.yml"] else w["website.yml"].update({True: {"push": {"branches": ["main"]}}})))
+        for needle in ("assemble_pages_site.py --website website --out", "assemble_pages_site.py --verify", "test_website.py", "SHA256SUMS-site"):
+            def drop(w, needle=needle):
+                for st in job(w)["steps"]:
+                    if "run" in st:
+                        st["run"] = st["run"].replace(needle, "true")
+            self.assertTrue(self.errs(drop), needle)
+        self.assertTrue(self.errs(lambda w: [st.update({"uses": "actions/upload-artifact@v4"}) for st in job(w)["steps"] if "upload-artifact" in str(st.get("uses", ""))]))
+        self.assertTrue(self.errs(lambda w: [st.get("with", {}).update({"name": "site"}) for st in job(w)["steps"] if "upload-artifact" in str(st.get("uses", ""))]))
+
+    def test_the_rehearsal_is_read_only_and_runs_the_release_scripts(self):
+        def job(w):
+            return w["release-rehearsal.yml"]["jobs"]["rehearse"]
+        self.assertTrue(self.errs(lambda w: w.pop("release-rehearsal.yml")))
+        self.assertTrue(self.errs(lambda w: w["release-rehearsal.yml"].__setitem__("permissions", {"contents": "write", "actions": "read"})))
+        self.assertTrue(self.errs(lambda w: job(w).update({"permissions": {"contents": "read", "actions": "write"}})))
+        self.assertTrue(self.errs(lambda w: job(w).update({"permissions": {"contents": "read"}})))
+        self.assertTrue(self.errs(lambda w: job(w).update({"environment": "release-publish"})))
+        self.assertTrue(self.errs(lambda w: job(w).pop("if")))
+        self.assertTrue(self.errs(lambda w: job(w).update({"if": "${{ github.ref_type == 'tag' }}"})))
+        for bad in ("gh release create v1", "scripts/release_draft.sh verify v1 dist", "git push origin HEAD", "git tag v9.9.9", "echo ${{ secrets.X }}"):
+            self.assertTrue(self.errs(lambda w, bad=bad: job(w)["steps"].append({"run": bad})), bad)
+        for bad in ("actions/upload-artifact", "actions/deploy-pages", "actions/upload-pages-artifact"):
+            self.assertTrue(self.errs(lambda w, bad=bad: job(w)["steps"].append({"uses": bad + "@" + "a" * 40})), bad)
+        for needle in ("scripts/release_guard.sh --rehearse", "scripts/release_candidate_find.sh", "scripts/release_candidate_verify.sh", "scripts/release_assemble_dist.sh", "scripts/release_notes.py"):
+            def drop(w, needle=needle):
+                for st in job(w)["steps"]:
+                    if needle in str(st.get("run", "")):
+                        st["run"] = "true"
+            self.assertTrue(self.errs(drop), needle)
+        self.assertTrue(self.errs(lambda w: w["release-rehearsal.yml"]["jobs"].update({"x": {"if": "${{ github.ref == 'refs/heads/main' }}", "uses": "./.github/workflows/release.yml"}})))
+
+    def test_ci_does_not_run_on_a_plain_push_in_the_development_repository_but_does_in_production(self):
+        gate = self.wf["ci.yml"]["jobs"]["checks"]["if"]
+        self.assertIn("github.repository == 'Glaubenskrieger/TSW-Forever'", gate)
+        self.assertIn("github.event_name != 'push'", gate)
+        self.assertTrue(self.errs(lambda w: w["ci.yml"]["jobs"]["checks"].pop("if")))
+        self.assertTrue(self.errs(lambda w: w["ci.yml"]["jobs"]["checks"].update({"if": gate.replace("github.event_name != 'push'", "true")})))
+        self.assertTrue(self.errs(lambda w: w["ci.yml"]["jobs"]["checks"].update({"if": gate.replace("github.repository == 'Glaubenskrieger/TSW-Forever' || ", "")})))
+        # the build workflow is not gated: it runs in both repositories
+        self.assertNotIn("event_name != 'push'", str(self.wf["build.yml"]["jobs"]["flatpak"].get("if", "")))
+
+    def test_the_rehearsal_and_the_release_fail_closed_and_use_the_artifacts_of_one_commit_only(self):
+        def step_of(w, wf, jn, needle):
+            return next(st for st in w[wf]["jobs"][jn]["steps"] if needle in str(st.get("uses", "")) + str(st.get("run", "")))
+        for wf, jn in (("release-rehearsal.yml", "rehearse"), ("release.yml", "candidate"), ("release.yml", "draft"), ("release.yml", "guard")):
+            with self.subTest(workflow=wf, job=jn):
+                self.assertTrue(self.errs(lambda w: w[wf]["jobs"][jn]["steps"][-1].update({"continue-on-error": True})))
+                self.assertTrue(self.errs(lambda w: w[wf]["jobs"][jn].update({"continue-on-error": True})))
+                for cond in ("always()", "failure()", "cancelled()", "${{ always() }}", "${{ failure() && true }}"):
+                    self.assertTrue(self.errs(lambda w, cond=cond: w[wf]["jobs"][jn]["steps"][-1].update({"if": cond})), cond)
+        # the cross-run download of the rehearsal and of the release: named after the commit, from the run the lookup found, with an explicit repository and token
+        for wf, jn in (("release-rehearsal.yml", "rehearse"), ("release.yml", "candidate")):
+            with self.subTest(download=wf):
+                self.assertTrue(self.errs(lambda w: step_of(w, wf, jn, "download-artifact")["with"].update({"pattern": "tsw-forever-*"})))
+                self.assertTrue(self.errs(lambda w: step_of(w, wf, jn, "download-artifact")["with"].update({"run-id": "12345"})))
+                self.assertTrue(self.errs(lambda w: step_of(w, wf, jn, "download-artifact")["with"].update({"run-id": "${{ github.run_id }}"})))
+                self.assertTrue(self.errs(lambda w: step_of(w, wf, jn, "download-artifact")["with"].pop("repository")))
+                self.assertTrue(self.errs(lambda w: step_of(w, wf, jn, "download-artifact")["with"].pop("github-token")))
+        self.assertTrue(self.errs(lambda w: step_of(w, "release-rehearsal.yml", "rehearse", "download-artifact")["with"].pop("run-id")), "without run-id the rehearsal would take artifacts of ITS OWN run")
+        self.assertTrue(self.errs(lambda w: step_of(w, "release.yml", "publish", "download-artifact")["with"].update({"name": "release-dist"})), "no artifact without the commit in its name")
+
+    def test_the_lookup_script_lists_all_runs_and_the_newest_decides(self):
+        text = open(os.path.join(ROOT, "scripts", "release_candidate_find.sh"), encoding="utf-8").read()
+        code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+        self.assertNotRegex(code, r"--status\b")
+        self.assertIn("sort_by(.createdAt) | last", code)
+        scripts = os.path.join(ROOT, "scripts")
+        self.assertEqual(c.check_release_scripts(scripts), [])
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        try:
+            shutil.copytree(scripts, os.path.join(tmp, "scripts"), ignore=shutil.ignore_patterns("__pycache__"))
+            path = os.path.join(tmp, "scripts", "release_candidate_find.sh")
+            original = open(path, encoding="utf-8").read()
+            open(path, "w", encoding="utf-8").write(original.replace("--limit 50", "--limit 50 --status success"))
+            self.assertTrue(any("must not filter runs by status" in e for e in c.check_release_scripts(os.path.join(tmp, "scripts"))))
+            open(path, "w", encoding="utf-8").write(original.replace("set -euo pipefail", "set -eo pipefail"))
+            self.assertTrue(any("pipefail" in e for e in c.check_release_scripts(os.path.join(tmp, "scripts"))))
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_the_windows_image_is_pinned(self):
+        self.assertEqual(self.wf["windows.yml"]["jobs"]["windows"]["runs-on"], "windows-2025")
+        self.assertTrue(self.errs(lambda w: w["windows.yml"]["jobs"]["windows"].update({"runs-on": "windows-latest"})))
+        self.assertTrue(self.errs(lambda w: w["windows.yml"]["jobs"]["windows"].update({"runs-on": "ubuntu-24.04"})))
+
+    def test_artifacts_are_kept_30_days_in_production_and_7_in_development(self):
+        import re as _re
+        for name in ("build.yml", "windows.yml", "flatpak-stable-build.yml", "flatpak.yml", "rc-artifacts.yml", "release-set.yml"):
+            text = open(os.path.join(ROOT, ".github", "workflows", name), encoding="utf-8").read()
+            values = _re.findall(r"retention-days:\s*(.+)", text)
+            self.assertTrue(values, name)
+            for v in values:
+                self.assertIn(v.strip(), (c.RETENTION_EXPR, "7"), f"{name}: retention-days {v!r}")
+        self.assertEqual(c.RETENTION_EXPR, "${{ github.repository == 'Glaubenskrieger/TSW-Forever' && 30 || 7 }}")
 
 
 if __name__ == "__main__":

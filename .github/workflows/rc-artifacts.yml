@@ -158,7 +158,7 @@ jobs:
           name: tsw-forever-${{ steps.version.outputs.version }}-release-set-${{ github.sha }}
           path: build/rc/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ github.repository == 'Glaubenskrieger/TSW-Forever' && 30 || 7 }}
       - name: Disk report - end of the job (also after a failure)
         if: ${{ always() }}
         run: scripts/ci_disk_report.sh "9 end of the job"

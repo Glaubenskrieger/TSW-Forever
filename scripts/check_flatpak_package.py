@@ -295,9 +295,12 @@ def check_rc_workflow(text, manifest):
     for uses in re.findall(r"uses:\s*(\S+)", text):
         if not uses.startswith("./") and not re.fullmatch(r".+@[0-9a-f]{40}", uses):
             errs.append(f"rc workflow: action {uses!r} is not pinned to a 40-character commit SHA")
-    for days in re.findall(r"retention-days:\s*(\d+)", text):
-        if int(days) > 30:
-            errs.append("rc workflow: artifacts are kept 30 days at most")
+    for value in re.findall(r"retention-days:\s*(.+)", text):
+        value = value.strip()
+        if value == RETENTION_EXPR:
+            continue  # 30 days in production, 7 days in the development repository
+        if not value.isdigit() or int(value) > 30:
+            errs.append("rc workflow: artifacts are kept 30 days at most (a number up to 30, or the production/development expression)")
     m = re.search(r'FREEDESKTOP_VERSION:\s*"([^"]+)"', text)
     if not m or m.group(1) != str(manifest.get("runtime-version")):
         errs.append("rc workflow: FREEDESKTOP_VERSION must equal the manifest's runtime-version")
@@ -314,7 +317,9 @@ def _triggers(doc):
     return on or {}
 
 
-OWNER_GUARD_PARTS = ("github.actor == github.repository_owner", "github.triggering_actor == github.repository_owner", "github.event_name == 'push'", "github.ref_type == 'tag'")
+PRODUCTION_REPO_GUARD = "github.repository == 'Glaubenskrieger/TSW-Forever'"  # nothing public ever runs in another repository (the development repository has no environments and must publish nothing)
+RETENTION_EXPR = "${{ github.repository == 'Glaubenskrieger/TSW-Forever' && 30 || 7 }}"  # artifact retention: 30 days in production, 7 days in the development repository (free storage is 500 MB)
+OWNER_GUARD_PARTS = (PRODUCTION_REPO_GUARD, "github.actor == github.repository_owner", "github.triggering_actor == github.repository_owner", "github.event_name == 'push'", "github.ref_type == 'tag'")
 RELEASE_ASSETS = ("tsw-forever-${version}.flatpak", "tsw-forever-${version}-src.tar.gz", "tsw-forever-${version}-windows-setup.exe", "dist/SHA256SUMS")
 
 
@@ -327,6 +332,48 @@ NEEDS = {  # job: the jobs it must (at least) wait for; the chain is what keeps 
 def _needs(job):
     n = job.get("needs")
     return [n] if isinstance(n, str) else list(n or [])
+
+
+def _pinned_actions(name, doc):
+    """Every action used by the workflow is pinned to a full commit SHA (a local `./` workflow is fine)."""
+    errs = []
+    for jname, job in (doc.get("jobs") or {}).items():
+        for st in job.get("steps") or []:
+            uses = str(st.get("uses", ""))
+            if uses and not uses.startswith("./") and not re.fullmatch(r".+@[0-9a-f]{40}", uses):
+                errs.append(f"{name}: job {jname}: action {uses!r} is not pinned to a 40-character commit SHA")
+    return errs
+
+
+def _fail_closed(name, doc):
+    """The release path and its rehearsal stop at the first failure and take artifacts of exactly one commit: no step may continue after an error, run after a failure, or download an artifact
+    that is not named after the commit; a download from ANOTHER run (the build run) must use the run id that the lookup step found, nothing else."""
+    errs = []
+    for jname, job in (doc.get("jobs") or {}).items():
+        if job.get("continue-on-error"):
+            errs.append(f"{name}: job {jname}: no continue-on-error (a failed check must stop everything)")
+        for st in job.get("steps") or []:
+            label = st.get("name", st.get("uses", "a step"))
+            if st.get("continue-on-error"):
+                errs.append(f"{name}: job {jname}: step {label!r}: no continue-on-error (fail closed)")
+            if re.search(r"always\(\)|failure\(\)|cancelled\(\)", str(st.get("if", ""))) or re.search(r"always\(\)|failure\(\)|cancelled\(\)", str(job.get("if", ""))):
+                errs.append(f"{name}: job {jname}: step {label!r}: no always(), failure() or cancelled() condition (nothing may run on after a failed check)")
+            if "download-artifact" in str(st.get("uses", "")):
+                w = st.get("with") or {}
+                named = str(w.get("pattern", "")) + " " + str(w.get("name", ""))
+                if "github.sha" not in named:
+                    errs.append(f"{name}: job {jname}: a downloaded artifact must be named after the commit (github.sha), never 'latest' or a pattern without it")
+                if "run-id" in w:
+                    if "steps.find.outputs.run_id" not in str(w["run-id"]):
+                        errs.append(f"{name}: job {jname}: a download from another run must use the run id that scripts/release_candidate_find.sh found (steps.find.outputs.run_id)")
+                    if not w.get("github-token") or not w.get("repository"):
+                        errs.append(f"{name}: job {jname}: a download from another run names the repository and the token explicitly")
+    return errs
+
+
+def _runs(job):
+    """What the steps of a job actually execute or configure (the `run` scripts and the `with` inputs), not their display names."""
+    return "\n".join(str(st.get("run", "")) + " " + repr(st.get("with", {})) for st in job.get("steps") or [])
 
 
 def _perms(job):
@@ -379,9 +426,10 @@ def check_tag_release_workflow(doc):
     if re.search(r"flatpak-stable-build|windows\.yml|build_flatpak\.sh (build|bundle|vendor|test)|cargo (build|test)|flatpak-builder", text):
         errs.append("release.yml: the release tag compiles and tests nothing (the candidate was built by build.yml when the commit was pushed)")
     cand = jobs["candidate"]
-    ctext = repr(cand)
-    for need, why in (("--workflow build.yml --commit", "look for the build run of exactly the tagged commit"), ("--status success", "accept a successful run only"), ("expired == false", "refuse expired artifacts"),
-                      ("release_candidate.py verify", "verify every file against candidate.json"), ("run-id", "download from that build run"), ("--version", "check the version")):
+    ctext = _runs(cand)
+    # the logic of the candidate lookup and verification lives in scripts shared with the read-only rehearsal (checked by check_release_scripts); the workflow must call them
+    for need, why in (("scripts/release_candidate_find.sh", "look for the build run of exactly the tagged commit with the shared script"), ("scripts/release_candidate_verify.sh", "verify every file against candidate.json with the shared script"),
+                      ("run-id", "download from that build run")):
         if need not in ctext:
             errs.append(f"release.yml: job candidate must {why} ({need!r} missing)")
     if _perms(cand) != {"contents": "read", "actions": "read"}:
@@ -413,13 +461,55 @@ def check_tag_release_workflow(doc):
     if "scripts/release_draft.sh publish" not in ptext or "persist-credentials" not in ptext:
         errs.append("release.yml: publish runs scripts/release_draft.sh publish and checks out without stored credentials")
     for need, jn, why in (
-        ("merge-base --is-ancestor", "guard", "check that the tagged commit is part of main"), ("pin_actions.sh --check", "guard", "refuse unpinned actions"),
-        ("version.py compare", "guard", "refuse a version that is not newer than the newest published release"),
-        ("check_release_set.py", "draft", "check the exact release set"), ("--with-windows", "draft", "include the Windows installer in the set"),
-        ("check_public_source.py", "draft", "audit the source archive"), ("sha256sum -c SHA256SUMS-flatpak", "draft", "check the checksum of the bundle"), ("scripts/release_draft.sh upload", "draft", "fill the draft and read it back"),
+        ("scripts/release_guard.sh", "guard", "run the shared guard checks (tag, commit on main, version, pinned actions, newer than the published release)"),
+        ("scripts/release_assemble_dist.sh", "draft", "assemble and verify the release set with the shared script"), ("scripts/release_notes.py", "draft", "take the release notes from the changelog"),
+        ("scripts/release_draft.sh upload", "draft", "fill the draft and read it back"),
     ):
-        if need not in repr(jobs[jn]):
+        if need not in _runs(jobs[jn]):
             errs.append(f"release.yml: job {jn} must {why} ({need!r} missing)")
+    if "--rehearse" in text:
+        errs.append("release.yml: the rehearsal mode of the guard is for release-rehearsal.yml only; a real release runs the real checks")
+    errs += _fail_closed("release.yml", doc)
+    return errs
+
+
+# What the shared release scripts must contain (they carry the checks that release.yml used to hold inline) and what they must never contain (they are also run by the read-only rehearsal).
+RELEASE_SCRIPT_NEEDS = {
+    "release_guard.sh": ("merge-base --is-ancestor", "pin_actions.sh --check", "version.py compare", "version.py check", "--exclude-drafts", "--rehearse"),
+    "release_candidate_find.sh": ("--workflow build.yml --commit", "gh api", ".expired", "is not successful", "An older run of the same commit is not used", "has expired", "does not exist", "not a full commit id"),
+    "release_candidate_verify.sh": ("release_candidate.py verify", "--version", "--commit", "was not downloaded", "unexpected artifact", "symbolic link", "not a full commit id", "exactly candidate.json"),
+    "release_assemble_dist.sh": ("check_release_set.py", "--with-windows", "check_public_source.py", "check_release_artifacts.py", "sha256sum -c SHA256SUMS-flatpak", "sha256sum -c SHA256SUMS-windows",
+                                 "sha256sum -c SHA256SUMS-source", "APP_VERSION="),
+    "release_notes.py": ("CHANGELOG.md", "re.escape(version)"),
+}
+RELEASE_SCRIPT_FORBIDDEN = re.compile(r"gh\s+release\s+(create|edit|upload|delete)|--draft=false|release_draft|git\s+(push|tag|commit)|gh\s+api\s+(-X|--method)\s*(POST|PUT|PATCH|DELETE)|--method\s+(POST|PUT|PATCH|DELETE)|secrets?\.|gpg", re.I)
+
+
+# the lookup must list ALL runs of the commit and let the newest one decide: a status filter would let an older successful run stand in for a newer failed one
+RELEASE_SCRIPT_FORBIDDEN_EXTRA = {"release_candidate_find.sh": re.compile(r"--status\b")}
+
+
+def check_release_scripts(scripts_dir):
+    """The scripts that release.yml and release-rehearsal.yml share: they carry the guard, candidate and set checks, and they only read."""
+    errs = []
+    for name, needles in RELEASE_SCRIPT_NEEDS.items():
+        path = os.path.join(scripts_dir, name)
+        if not os.path.isfile(path):
+            errs.append(f"scripts/{name} is missing (shared by release.yml and release-rehearsal.yml)")
+            continue
+        text = open(path, encoding="utf-8").read()
+        code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+        for need in needles:
+            if need not in text:
+                errs.append(f"scripts/{name} must contain {need!r}")
+        if RELEASE_SCRIPT_FORBIDDEN.search(code):
+            errs.append(f"scripts/{name} must only read: no release creation or publication, no tag, no push, no write API call, no secret")
+        if name in RELEASE_SCRIPT_FORBIDDEN_EXTRA and RELEASE_SCRIPT_FORBIDDEN_EXTRA[name].search(code):
+            errs.append(f"scripts/{name} must not filter runs by status: the newest run of the commit decides and an older one never stands in for it")
+        if name.endswith(".sh") and "set -euo pipefail" not in text:
+            errs.append(f"scripts/{name} must run with `set -euo pipefail` (fail closed)")
+        if os.name != "nt" and not os.access(path, os.X_OK):
+            errs.append(f"scripts/{name} must be executable (the workflows call it directly)")
     return errs
 
 
@@ -466,7 +556,7 @@ def check_ci_policy(workflows, manifest):
     import yaml  # noqa: F401  (imported by the caller; kept here to fail loudly when missing)
     errs = []
     names = set(workflows)
-    for need in ("ci.yml", "flatpak.yml", "flatpak-stable-build.yml", "rc-artifacts.yml", "windows.yml", "release-set.yml", "release.yml", "build.yml"):
+    for need in ("ci.yml", "flatpak.yml", "flatpak-stable-build.yml", "rc-artifacts.yml", "windows.yml", "release-set.yml", "release.yml", "build.yml", "website.yml", "release-rehearsal.yml"):
         if need not in names:
             errs.append(f"missing workflow {need}")
     for name, doc in sorted(workflows.items()):
@@ -496,6 +586,11 @@ def check_ci_policy(workflows, manifest):
                 for cnd in conds:
                     if re.search(r"outputs\.(rust|e2e|flatpak)\s*==\s*'true'", cnd):
                         errs.append(f"ci.yml: job {jname}: an optional part must be skipped only on an explicit 'false' (use != 'false'), never run only on 'true'")
+            # the development repository does not run ci on a plain push (build.yml runs the same tests there; the free quota must not be spent twice): the first job carries the gate,
+            # the others need it. Production keeps ci on every push. Same checks, other trigger only.
+            gate = str(((doc.get("jobs") or {}).get("checks") or {}).get("if", ""))
+            if PRODUCTION_REPO_GUARD not in gate or "github.event_name != 'push'" not in gate:
+                errs.append("ci.yml: job checks must carry the development gate (production repository OR not a plain push): the development repository must not run ci on every push")
             for jname, job in (doc.get("jobs") or {}).items():
                 used = str(job.get("uses", ""))
                 if not used:
@@ -591,23 +686,30 @@ def check_ci_policy(workflows, manifest):
             if re.search(r"gpg\s+--(batch\s+--)?import|--gpg-sign|flatpak_sign_ci|secret-keys?|gh\s+release|release_draft|git\s+(push|tag|commit)", text):
                 errs.append("build.yml: it signs nothing, creates no release, no tag and no commit")
             jobs = doc.get("jobs") or {}
-            if sorted(jobs) != ["candidate", "flatpak", "site", "windows"]:
-                errs.append(f"build.yml: the jobs are exactly candidate, flatpak, site, windows (found {sorted(jobs)})")
+            if sorted(jobs) != ["candidate", "flatpak", "site", "site-build", "windows"]:
+                errs.append(f"build.yml: the jobs are exactly candidate, flatpak, site, site-build, windows (found {sorted(jobs)})")
             else:
                 if jobs["flatpak"].get("uses") != "./.github/workflows/flatpak-stable-build.yml":
                     errs.append("build.yml: the flatpak job calls flatpak-stable-build.yml")
+                sb = jobs["site-build"]
+                if sb.get("uses") != "./.github/workflows/website.yml":
+                    errs.append("build.yml: the job site-build calls website.yml (the one web site build of development and production)")
+                if _needs(sb) or any(v == "write" for v in _perms(sb).values()):
+                    errs.append("build.yml: the job site-build waits for nothing and has no write permission")
                 site = jobs["site"]
-                if _needs(site):
-                    errs.append("build.yml: the web site does not wait for the builds (it is independent of any release)")
+                if _needs(site) != ["site-build"]:
+                    errs.append("build.yml: the web site is deployed after the web site build only (needs: site-build), never after the Flatpak or Windows builds or a release")
                 if _perms(site) != {"contents": "read", "pages": "write", "id-token": "write"}:
                     errs.append(f"build.yml: job site has exactly contents: read, pages: write, id-token: write (found {_perms(site)})")
                 if (site.get("concurrency") or {}).get("group") != "pages-site" or (site.get("concurrency") or {}).get("cancel-in-progress") is not False:
                     errs.append("build.yml: job site shares the concurrency group pages-site (no cancel): web site and release deployments never interleave")
                 if "github.event_name == 'push'" not in str(site.get("if", "")):
                     errs.append("build.yml: the site is deployed for a push to main only")
+                if PRODUCTION_REPO_GUARD not in str(site.get("if", "")):
+                    errs.append("build.yml: the site is deployed from the production repository only (a test or development repository must never deploy GitHub Pages)")
                 stext = repr(site)
-                for need, why in (("assemble_pages_site.py --website website", "assemble the static web site only"), ("test_website.py", "test the web site before it goes live"),
-                                  ("git ls-remote", "deploy only the tip of main"), ("deploy-pages", "deploy")):
+                for need, why in (("download-artifact", "deploy the artifact that the web site build kept (the same bytes that were tested)"), ("sha256sum --check", "check the checksums of that artifact"),
+                                  ("assemble_pages_site.py --verify", "check the artifact with the assembler's own rules"), ("git ls-remote", "deploy only the tip of main"), ("deploy-pages", "deploy")):
                     if need not in stext:
                         errs.append(f"build.yml: job site must {why} ({need!r} missing)")
                 if re.search(r"--repo\b|--refs\b|preserve_live|channels\.json|flatpakref|flatpakrepo|\.flatpak\b|build/flatpak|/repo\b|OSTree|ostree", stext):
@@ -619,9 +721,49 @@ def check_ci_policy(workflows, manifest):
                     if jn != "site" and "deploy-pages" in repr(job):
                         errs.append(f"build.yml: job {jn} must not deploy")
                 cand = repr(jobs["candidate"])
-                for need in ("release_candidate.py create", "'retention-days': 30"):
+                for need in ("release_candidate.py create",):
                     if need not in cand:
-                        errs.append(f"build.yml: job candidate must write the manifest and keep it 30 days ({need!r} missing)")
+                        errs.append(f"build.yml: job candidate must write the manifest ({need!r} missing)")
+                if RETENTION_EXPR not in cand:
+                    errs.append(f"build.yml: job candidate keeps the manifest 30 days in production and 7 days in the development repository ({RETENTION_EXPR!r} missing)")
+        elif name == "website.yml":
+            # THE WEB SITE BUILD of development and production: tests, assembles with scripts/assemble_pages_site.py and keeps the artifact; it never deploys
+            if sorted(trig) != ["workflow_call", "workflow_dispatch"] or (trig.get("workflow_dispatch") or {}).get("inputs"):
+                errs.append("website.yml: triggers are a call from build.yml and a manual start without inputs")
+            if str(doc.get("permissions")) != "{'contents': 'read'}":
+                errs.append("website.yml: the workflow-level permissions must be exactly contents: read")
+            if "secrets." in text or "vars." in text or "environment" in text or re.search(r"deploy-pages|upload-pages-artifact|pages: write|id-token|gh\s+release|git\s+(push|tag)", text):
+                errs.append("website.yml: the web site build only builds: no Pages deployment, no environment, no secret, no release, no push")
+            for need, why in (("assemble_pages_site.py --website website --out", "assemble the site with the shared assembler"), ("assemble_pages_site.py --verify", "check the assembled site with the assembler's own rules"),
+                              ("test_website.py", "test the site"), ("test_website_download.js", "test the download logic"), ("SHA256SUMS-site", "write the checksums of the site"),
+                              ("tsw-forever-site-${{ github.sha }}", "name the artifact after the commit"), ("actions/upload-artifact", "keep the assembled site as an artifact")):
+                if need not in text:
+                    errs.append(f"website.yml: the build must {why} ({need!r} missing)")
+            for jname, job in (doc.get("jobs") or {}).items():
+                if any(v == "write" for v in _perms(job).values()):
+                    errs.append(f"website.yml: job {jname} must not have write permissions")
+            errs += _pinned_actions(name, doc)
+        elif name == "release-rehearsal.yml":
+            # THE READ-ONLY REHEARSAL: the same scripts as release.yml, nothing is created, published or uploaded
+            if sorted(trig) != ["workflow_dispatch"] or (trig.get("workflow_dispatch") or {}).get("inputs"):
+                errs.append("release-rehearsal.yml: the only trigger is a manual start without inputs (no push, no tag, no free ref)")
+            if str(doc.get("permissions")) != "{'contents': 'read', 'actions': 'read'}":
+                errs.append("release-rehearsal.yml: the workflow-level permissions must be exactly contents: read and actions: read")
+            if re.search(r"secrets\.|vars\.|environment|gh\s+release|release_draft|git\s+(push|tag|commit)|upload-artifact|upload-pages|deploy-pages|pages: write|id-token|contents: write|actions: write|uses: \./", text):
+                errs.append("release-rehearsal.yml: read-only: no secret, no environment, no release, no tag, no push, no upload, no Pages, no write permission, no call of another workflow")
+            for jname, job in (doc.get("jobs") or {}).items():
+                if "refs/heads/main" not in str(job.get("if", "")):
+                    errs.append(f"release-rehearsal.yml: job {jname} runs on main only")
+                if _perms(job) != {"contents": "read", "actions": "read"}:
+                    errs.append(f"release-rehearsal.yml: job {jname} has exactly contents: read and actions: read")
+                jtext = _runs(job)
+                errs += _pinned_actions(name, {"jobs": {jname: job}})
+                errs += _fail_closed(name, {"jobs": {jname: job}})
+                if not any("download-artifact" in str(st.get("uses", "")) and "run-id" in (st.get("with") or {}) for st in job.get("steps") or []):
+                    errs.append(f"release-rehearsal.yml: job {jname} must download the artifacts from the build run that the lookup found (download-artifact with run-id)")
+                for need in ("scripts/release_guard.sh --rehearse", "scripts/release_candidate_find.sh", "scripts/release_candidate_verify.sh", "scripts/release_assemble_dist.sh", "scripts/release_notes.py"):
+                    if need not in jtext:
+                        errs.append(f"release-rehearsal.yml: job {jname} must run {need} (the same script as release.yml)")
         elif name == "flatpak.yml":
             if "pages" in repr(doc.get("permissions")) or "secrets." in text:
                 errs.append("flatpak.yml: the build workflow has no publishing rights and no secrets")
@@ -635,8 +777,8 @@ def check_ci_policy(workflows, manifest):
             for jname, job in (doc.get("jobs") or {}).items():
                 if "write" in repr(job.get("permissions")):
                     errs.append(f"windows.yml: job {jname} must not have write permissions")
-                if not str(job.get("runs-on", "")).startswith("windows-"):
-                    errs.append(f"windows.yml: job {jname} must run on a Windows runner")
+                if str(job.get("runs-on", "")) != "windows-2025":
+                    errs.append(f"windows.yml: job {jname} must run on the pinned Windows image windows-2025 (not windows-latest, which moves without a commit)")
         elif name == "release-set.yml":
             if sorted(trig) != ["workflow_call", "workflow_dispatch"] or (trig.get("workflow_dispatch") or {}).get("inputs"):
                 errs.append("release-set.yml: manual start (workflow_dispatch, no inputs) or a call from release.yml only: a push or a tag must not start it")
@@ -674,6 +816,9 @@ def main(argv):
             if f.endswith((".yml", ".yaml")):
                 wf[f] = yaml.safe_load(open(os.path.join(argv[2], f)))
         errs = check_ci_policy(wf, json.load(open(argv[3])))
+        scripts_dir = os.path.normpath(os.path.join(argv[2], "..", "..", "scripts"))
+        if os.path.isdir(scripts_dir):
+            errs += check_release_scripts(scripts_dir)
         for e in errs:
             print("VIOLATION:", e)
         print("OK" if not errs else f"{len(errs)} violation(s)")

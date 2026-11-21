@@ -76,6 +76,34 @@ Local (all run by `scripts/build_flatpak.sh test` and `ci.yml`): `test_release_c
 
 **Not testable before the first real run:** that the environments really stop for the approval (GitHub's behaviour), the cross-run artifact download and `gh run list --commit` of the job `candidate`, the Pages deployment of `build.yml`, the draft handling of `release_draft.sh` with the real `gh`, and the web site's download buttons against a real release. The first push and the first tag show them; a failure before `publish` leaves nothing public.
 
+**Development repository (the staging environment, `Glaubenskrieger/TSW-Forever-Dev`).** Every change runs through this separate private repository with the complete pipelines (native Windows and Linux runners) before it may be taken over into production. It uses the SAME workflow files, scripts and checks as production; only these things differ, and each difference is a condition inside the shared files, never a second copy:
+
+| Aspect | Development | Production |
+|---|---|---|
+| Publishing (every job of `release.yml`, the Pages job `site`) | skipped (`github.repository == 'Glaubenskrieger/TSW-Forever'`) | runs |
+| `ci.yml` trigger | manual and pull requests only (`build.yml` already runs the same tests on every push; no double runs) | every push, pull requests, manual |
+| `build.yml` | every push to `main` | every push to `main` |
+| Artifact retention | 7 days (free artifact storage is 500 MB) | 30 days |
+| Windows runner | `windows-2025` | `windows-2025` |
+| Pages, environments, approvals | not available on GitHub Free for private repositories | the two approvals and Pages |
+
+`check_flatpak_package.py ci-policy` enforces all of this with mutation tests (`scripts/test_check_flatpak_package.py`).
+
+**The web site build (`website.yml`).** One workflow builds the web site in both repositories: the tests, the same assembler as Pages gets (`scripts/assemble_pages_site.py`), and the artifact `tsw-forever-site-<commit>` (`site/` = the Pages content, `SHA256SUMS-site`, `COMMIT`). Production deploys exactly those bytes after checking them again (`assemble_pages_site.py --verify`, checksums, commit); development only keeps the artifact. To look at it: `gh run download <run> -n tsw-forever-site-<commit> -D <folder>` and `scripts/website_preview.sh --from-artifact <folder>` (or the downloaded zip), which serves it at `http://127.0.0.1:<port>/TSW-Forever/`, the production path. The existing local previews (`website_preview.sh`, `--as-pages`) are unchanged. Deviation: development cannot show it on a real GitHub Pages URL (Pages needs a public repository or a paid plan, and a Pages site is public either way), so the local preview over `http://127.0.0.1` is the staging view; GitHub's CDN and cache are not part of it.
+
+**The release rehearsal (`release-rehearsal.yml`).** Manual, on `main`, read-only (`contents: read`, `actions: read`; no environment, no secret, no upload, no tag, no release). It runs the shared scripts of `release.yml`: `release_guard.sh --rehearse` (version consistency, commit on main, pinned actions, newer than the newest published release; the tag is taken as `v<APP_VERSION>`), `release_candidate_find.sh` (the successful `build` run of exactly this commit, complete and not expired artifacts), the artifact download from that run, `release_candidate_verify.sh` (every file against `candidate.json`), `release_assemble_dist.sh` (the four release files, `SHA256SUMS`, `check_release_set.py`, the source audits) and `release_notes.py`. Start it with `gh workflow run release-rehearsal.yml --ref main` after a green `build` of the commit (within the 7 days of the artifacts). It costs about two Linux minutes.
+
+**Fail-closed behaviour of the rehearsal and of the release (checked by `scripts/test_release_scripts.py`, `scripts/test_check_flatpak_package.py` and the policy check).** Artifacts in the development repository live only 7 days, so a missing artifact is expected and must never lead to a substitute:
+- The lookup (`release_candidate_find.sh`) lists ALL `build` runs of exactly the commit and lets the NEWEST one decide. If it failed, was cancelled or is still running, the rehearsal stops, even when an older successful run of the same commit exists; a run of another commit is never considered. There is no status filter in the script (the policy refuses one).
+- Each of the four artifacts (`flatpak`, `source`, `windows`, `candidate`, named with version and the full commit id) must exist and not be expired. The message says which one is missing or expired and what to do (`gh workflow run build.yml --ref <ref>`, then start the workflow again); the retention of both repositories (30 days production, 7 days development) is named.
+- The download takes the run id that the lookup found and the artifact names that carry the commit id; a download without the commit in the name, or from any other run id, is refused by the policy. If an artifact vanishes between the lookup and the download, `release_candidate_verify.sh` stops with an explicit "was not downloaded: it has expired, was deleted, or never existed for this commit".
+- `release_candidate_verify.sh` accepts exactly the four artifacts of this version and commit (an additional artifact, a loose file, a symbolic link or a second file in the candidate artifact is refused), then `release_candidate.py verify` compares version, full commit id and the SHA-256 of every file with `candidate.json`, and refuses a missing or additional file and any changed byte.
+- Every step runs with `set -euo pipefail`; no step has `continue-on-error`, `always()`, `failure()` or `cancelled()`; the first failure ends the job and nothing after it runs (the closing summary is only reached when everything passed).
+
+What the rehearsal and the development repository CANNOT test (first real run: production, with the owner present): a real `vX.Y.Z` tag push and the tag identity check of the guard; the two environment approvals (GitHub Free ignores them in private repositories); `release_draft.sh` against a real release (it is tested with a stand-in `gh`; a draft in development is ruled out: no releases there); the Pages deployment itself; and the production guard conditions seen from the production repository name.
+
+**Transfer to production.** `scripts/export_public.py` (a private tool) builds the public tree from a commit that is on `origin/main` of the development repository (with `--require-green-ci`: and has a successful `build` run), by the allow-list `scripts/export_public_rules.json`. It copies files byte for byte from the Git objects, audits the result (`scripts/prepublish_check.py` and a forbidden-path wall), writes `<folder>.manifest.json` (commit, tree, rules hash, SHA-256 of every file) and can `verify` a public working folder read-only against the export. The owner alone commits and pushes in the public repository.
+
 ## 6. Recovery
 
 | Situation | What to do |

@@ -3,6 +3,20 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* The few layout values of the whole page (harmonised 2026-11-21). Every width, text measure and vertical distance below is taken from here. */
+:root {
+  --content-width: 1080px;     /* the one page column (.wrap): headings, grids, cards and the guiding sentence may use all of it */
+  --content-measure: 46rem;    /* the width of ordinary running text: 736 px at 16 px; it shrinks with the screen */
+  --prose-size: 1.05rem;       /* running text outside the cards */
+  --prose-line: 1.75;
+  --card-pad-x: 1.4rem;        /* the horizontal inner space of a card (also used for the width of the wide cards) */
+  --space-card-gap: 1.1rem;    /* between cards */
+  --space-heading: 1.3rem;     /* a heading to the content that follows it */
+  --space-para: 1rem;          /* between ordinary paragraphs */
+  --space-intro: 1.5rem;       /* an introduction (the large serif line) to the text that follows */
+  --space-story: 2.2rem;       /* the personal story to the cards, and before the guiding sentence */
+}
+
 html { scroll-behavior: smooth; scroll-padding-top: 4.5rem; -webkit-text-size-adjust: 100%; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
 
@@ -29,7 +43,9 @@ code { background: var(--btn-base); border: 1px solid var(--card-line); border-r
 pre { background: var(--btn-base); border: 1px solid var(--card-line); border-radius: 4px; padding: 0.8rem 1rem; overflow-x: auto; margin: 0.6rem 0 1rem; color: var(--text); }
 pre code { background: none; border: 0; padding: 0; }
 
-.wrap { width: min(1080px, 100% - 2rem); margin-inline: auto; }
+.wrap { width: min(var(--content-width), 100% - 2rem); margin-inline: auto; }
+/* the page column is the container that the grid rules below ask for its real width (container queries): the layout follows the space that is actually there */
+section > .wrap { container-type: inline-size; }
 
 /* ---- header --------------------------------------------------------------------------------------------------------- */
 .site-header { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--ink) 88%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--frame); }
@@ -55,13 +71,14 @@ nav.main a:hover { color: var(--text); border-bottom-color: var(--accent-hot); }
 section { padding-block: 3.2rem; }
 section + section { border-top: 1px solid var(--frame); }
 h1, h2, h3 { line-height: 1.2; margin: 0 0 0.8rem; font-weight: 700; }
+section h2 { margin-bottom: var(--space-heading); }
 h2 { font-size: clamp(1.3rem, 2.6vw, 1.7rem); letter-spacing: 0.08em; text-transform: uppercase; }
 h2::after { content: ""; display: block; width: 3.2rem; height: 2px; background: linear-gradient(90deg, var(--ornament), transparent); margin-top: 0.6rem; }
 h3 { font-size: 1.05rem; letter-spacing: 0.04em; color: var(--text); }
-p { margin: 0 0 1rem; color: var(--dim); max-width: 68ch; }
-.lead { font-size: 1.1rem; color: var(--text); }
+p { margin: 0 0 var(--space-para); color: var(--dim); max-width: var(--content-measure); }
+.hero-lead { font-size: 1.1rem; color: var(--text); }
 .kicker { color: var(--ornament); letter-spacing: 0.3em; text-transform: uppercase; font-size: 0.78rem; margin-bottom: 1rem; }
-ol, ul { color: var(--dim); padding-left: 1.3rem; max-width: 72ch; }
+ol, ul { color: var(--dim); padding-left: 1.3rem; max-width: var(--content-measure); }
 li { margin-bottom: 0.45rem; }
 
 .hero { padding-block: clamp(3rem, 9vw, 6.5rem) 3.5rem; text-align: center; }
@@ -70,7 +87,7 @@ li { margin-bottom: 0.45rem; }
 .hero .rule { height: 1px; width: min(26rem, 80%); margin: 1rem auto; background: linear-gradient(90deg, transparent, var(--accent), transparent); }
 .hero .sub { color: var(--accent-hot); letter-spacing: 0.55em; text-transform: uppercase; font-size: 0.8rem; margin-bottom: 1.6rem; font-family: "Noto Serif", Georgia, serif; }
 .hero .motto { font-family: "Noto Serif", Georgia, serif; font-style: italic; font-size: clamp(1.1rem, 2.6vw, 1.4rem); color: var(--text); margin: 0 auto 1.2rem; }
-.hero p { margin-inline: auto; }
+.hero p { margin-inline: auto; max-width: 68ch; }
 .hero .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.9rem; margin: 1.8rem 0 1rem; }
 .small { font-size: 0.85rem; color: var(--faint); }
 
@@ -90,23 +107,26 @@ li { margin-bottom: 0.45rem; }
 .copy:hover { background: var(--btn-hover); border-color: var(--hover-border); }
 
 /* ---- cards --------------------------------------------------------------------------------------------------------- */
-.grid { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); margin-block: 1.3rem; }
-.card { background: var(--card); border: 1px solid var(--card-line); border-radius: 4px; padding: 1.3rem 1.4rem; }
+.grid { display: grid; gap: var(--space-card-gap); grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); margin-block: var(--space-heading); }
+.card { background: var(--card); border: 1px solid var(--card-line); border-radius: 4px; padding: 1.3rem var(--card-pad-x); }
+.card p, .card li { max-width: none; }  /* the width of a card is the width of its text */
 .card h3 { margin-bottom: 0.7rem; display: flex; align-items: center; gap: 0.55rem; font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif; font-size: 0.72rem; letter-spacing: 0.24em; text-transform: uppercase; color: var(--dim); }
 .card h3::before { content: ""; flex: none; width: 3px; height: 14px; background: var(--accent); }
-.sub-h { font-size: 1.15rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 2.2rem 0 0.9rem; }
+.sub-h { font-size: 1.15rem; letter-spacing: 0.14em; text-transform: uppercase; margin: var(--space-story) 0 var(--space-heading); }
 .grid.two { grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); }
-.card.wide { max-width: 52rem; }
-.story { max-width: 46rem; margin-bottom: 1.6rem; }
-.story .lead { font-family: "Noto Serif", Georgia, serif; font-size: 1.3rem; }
+/* the two installation cards (Windows, Linux) share one width: the text measure plus the inner space of a card, so that their text is as wide as every other running text */
+.card.wide { max-width: calc(var(--content-measure) + 2 * var(--card-pad-x) + 2px); }
+/* "Why TSW-Forever?": the large serif introduction, two paragraphs at the common text measure, the guiding sentence at the full column width; the three cards below are untouched */
+.story { margin-bottom: var(--space-story); }
+.story .story-lead { font-family: "Noto Serif", Georgia, serif; font-size: 1.5rem; line-height: 1.35; font-weight: 600; color: var(--text); margin-bottom: var(--space-intro); max-width: none; }
 .card p:last-child, .card ul:last-child, .card ol:last-child { margin-bottom: 0; }
-.notice { border-left: 3px solid var(--ornament); background: var(--card); padding: 0.8rem 1rem; color: var(--dim); max-width: 72ch; margin: 1rem 0; border-radius: 0 4px 4px 0; }
-.legal { background: var(--card); border: 1px solid var(--card-line); border-radius: 4px; padding: 1.4rem 1.5rem; }
+.notice { border-left: 3px solid var(--ornament); background: var(--card); padding: 0.8rem 1rem; color: var(--dim); max-width: var(--content-measure); margin: var(--space-para) 0; border-radius: 0 4px 4px 0; }
+.legal { background: var(--card); border: 1px solid var(--card-line); border-radius: 4px; padding: 1.3rem var(--card-pad-x); }
 
 .toast { position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%); z-index: 40; background: var(--card); border: 1px solid var(--warn); color: var(--text); border-radius: 4px; padding: 0.6rem 1rem; max-width: min(34rem, 92vw); font-size: 0.85rem; }
 
 footer { border-top: 1px solid var(--frame); padding-block: 2rem; color: var(--faint); font-size: 0.85rem; text-align: center; }
-footer p { margin-inline: auto; color: var(--faint); }
+footer p { margin-inline: auto; max-width: 68ch; color: var(--faint); }
 
 /* ---- the first-visit faction choice ------------------------------------------------------------------------------------ */
 /* While it is open the page behind it (#page) is dark, blurred and inert (set in app.js); the dialog itself is lit with the faction colours. */
@@ -118,7 +138,7 @@ body.gated #page { filter: blur(10px) brightness(0.32) saturate(0.7); pointer-ev
 .gate-box { width: min(60rem, 100%); background: linear-gradient(180deg, var(--card) 0%, var(--bg-end) 100%); border: 1px solid var(--ornament); border-radius: 6px; padding: clamp(1.4rem, 4vw, 2.8rem); text-align: center; box-shadow: 0 0 0 1px var(--ink), 0 0 90px var(--shadow), 0 30px 80px rgba(0, 0, 0, 0.7); }
 .gate-box h2 { text-align: center; font-size: clamp(1.4rem, 3.4vw, 2rem); letter-spacing: 0.16em; }
 .gate-box h2::after { margin-inline: auto; width: 6rem; background: linear-gradient(90deg, transparent, var(--ornament), transparent); }
-.gate-box p { margin-inline: auto; color: var(--text); }
+.gate-box p { margin-inline: auto; max-width: 68ch; color: var(--text); }
 .faction-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); margin-top: 1.6rem; }
 .faction { text-align: center; cursor: pointer; color: var(--text); background: linear-gradient(180deg, var(--card) 0%, var(--bg-end) 100%); border: 1px solid var(--accent); border-radius: 5px; padding: 1.6rem 1rem; font: inherit; transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s; box-shadow: 0 0 24px var(--shadow); }
 .faction:hover, .faction:focus-visible { border-color: var(--hover-border); box-shadow: 0 0 40px var(--shadow); transform: translateY(-2px); }
@@ -137,8 +157,53 @@ body.gated #page { filter: blur(10px) brightness(0.32) saturate(0.7); pointer-ev
   .copy { padding: 0.5rem; }
 }
 @media print { #page { filter: none !important; } .site-header, .gate, .toast { display: none !important; } body { background: #fff; color: #000; } p, li { color: #222; } }
-#win-sha { word-break: break-all; display: inline-block; margin: 0.2rem 0; }
+/* the SHA-256 value (64 characters, no space) breaks inside its card; the text itself stays one string, so it can be selected and copied whole */
+.dl code { overflow-wrap: anywhere; word-break: break-all; }
 .cmd pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.story .closing { font-family: "Noto Serif", Georgia, serif; font-style: italic; color: var(--text); margin-top: 1.2rem; }
+/* the guiding sentence: an editorial quote - a thin dark-red rule on the left, no background, no box */
+.story .closing { font-family: "Noto Serif", Georgia, serif; font-style: italic; font-size: 1.3rem; line-height: 1.6; color: var(--text); margin: var(--space-story) 0 0; padding-left: 1.2rem; border-left: 2px solid var(--accent); max-width: none; }
 .legal h3 { margin-top: 1.6rem; }
 .noscript p { margin: 0 0 0.5rem; max-width: none; }
+
+/* Running text OUTSIDE the cards (introductions, lists, notices, the story, the legal box, the FAQ): one size and one line height. Cards, hero, footer and dialog keep their own. */
+section:not(.hero) > .wrap > :is(p:not(.small), ul, ol), .story p, .legal :is(p, li), .faq :is(summary, details p) { font-size: var(--prose-size); line-height: var(--prose-line); }
+
+/* update instructions: numbered steps inside cards and the questions about updates */
+.card ol { padding-left: 1.3rem; margin: 0.5rem 0; }
+.card ol li { margin: 0.45rem 0; }
+.faq { max-width: var(--content-measure); }
+.faq details { border: 1px solid var(--line, rgba(128,128,128,0.35)); border-radius: 4px; background: var(--card); padding: 0.1rem 1rem; margin: 0.5rem 0; }
+.faq summary { cursor: pointer; padding: 0.7rem 0; font-weight: 600; }
+.faq details p { margin: 0 0 0.9rem; color: var(--dim); max-width: none; }
+
+/* Download cards: side by side, the two buttons start at the same height although the descriptions differ in length. Each card takes five rows of its grid and shares them with the other card
+   (subgrid: title, description, button, status, checksum); `row-gap: 0` on the card keeps the rows of one card together while the grid keeps its normal gap, so two cards below each other stay
+   apart. This depends on nothing but the real layout: one column = each card has its own rows, two columns = common rows. Browsers without subgrid keep the plain cards. */
+@supports (grid-template-rows: subgrid) {
+  .dl-grid > .card.dl { display: grid; grid-row: span 5; grid-template-rows: subgrid; row-gap: 0; }
+  .dl-grid > .card.dl > :nth-child(1) { grid-row: 1; }
+  .dl-grid > .card.dl > :nth-child(2) { grid-row: 2; }
+  .dl-grid > .card.dl > :nth-child(3) { grid-row: 3; }
+  .dl-grid > .card.dl > :nth-child(4) { grid-row: 4; }
+  .dl-grid > .card.dl > :nth-child(5) { grid-row: 5; }
+}
+
+/* The grids of three cards (why, features): three equal columns when the page column is wide enough for readable cards (3 x 16rem + 2 gaps), otherwise ONE column - never two
+   cards and a lonely third. The default is the single column, so a browser without container queries keeps a working layout. */
+.grid.three { grid-template-columns: 1fr; }
+@container (min-width: 50.2rem) {
+  .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* Header on tablets: brand and tools on the first row, the navigation below it (as on phones), so the sticky header stays low. */
+@media (max-width: 64rem) {
+  nav.main { margin-left: 0; width: 100%; order: 3; }
+  .tools { margin-left: auto; }
+  .bar { gap: 0.3rem 1rem; }
+}
+
+/* Hero buttons below the width at which they no longer fit in one row: equal width, one below the other, centred (phones: the whole width of the column). */
+@media (max-width: 52rem) {
+  .hero .actions { flex-direction: column; align-items: center; }
+  .hero .actions .btn { width: min(100%, 24rem); }
+}
