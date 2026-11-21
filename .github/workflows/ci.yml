@@ -68,7 +68,7 @@ jobs:
             fi
             [ -n "$files" ] || full=true   # unknown or empty range: do everything
           fi
-          # a part is skipped only when NOTHING of its area changed: documentation-only changes skip the Rust feature tests; the end-to-end test needs Flatpak, signing,
+          # a part is skipped only when NOTHING of its area changed: documentation-only changes skip the Rust feature tests; the end-to-end test needs Flatpak,
           # script, workflow or Rust changes; the Flatpak build needs anything that can reach the package
           rust=true; e2e=true; flatpak=true
           if [ "$full" = false ]; then
@@ -82,7 +82,7 @@ jobs:
       - name: Install check tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools flatpak ostree gnupg curl libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev
+          sudo apt-get install --yes --no-install-recommends rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools flatpak ostree curl libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev
 
       - name: Version and action pins
         run: |
@@ -121,9 +121,9 @@ jobs:
         run: |
           for d in patcher launcher launcher-gui; do (cd "$d" && cargo clippy --offline --locked --all-targets -- -D warnings); done
 
-      # flatpak, ostree, gnupg and curl are installed above, before this step: the tests of the signing, the mirror of the live history, the static-delta update and the release script
-      # must RUN here (TSW_REQUIRE_TOOLS=1 turns a missing program into a failure instead of a silent skip); the e2e step below uses the same tools
-      - name: Tests (Rust crates and Python policy tests; the signing, mirror, delta and release tests must run, not be skipped)
+      # flatpak and curl are installed above, before this step: the Flatpak and release tests must RUN here (TSW_REQUIRE_TOOLS=1 turns a missing program into a failure instead of a
+      # silent skip); the e2e step below uses the same tools
+      - name: Tests (Rust crates and Python policy tests; the Flatpak and release tests must run, not be skipped)
         env:
           TSW_REQUIRE_TOOLS: "1"
         run: scripts/build_flatpak.sh test
@@ -134,9 +134,9 @@ jobs:
         run: |
           for d in launcher launcher-gui; do (cd "$d" && cargo test --offline --locked --features windows-self-update); done
 
-      - name: Flatpak update chain end-to-end (temporary keys, local repository, throw-away Flatpak installation; no network, nothing published)
+      - name: Flatpak bundle install and update end-to-end (throw-away Flatpak installation and a stand-in app; no network, nothing published)
         if: ${{ steps.changes.outputs.e2e != 'false' }}
-        run: scripts/e2e_flatpak_update.sh
+        run: scripts/e2e_flatpak_bundle.sh
 
       - name: Tests of the TESTING channel build (only where the private overlay exists; own target folder so the stable build is not disturbed)
         run: |

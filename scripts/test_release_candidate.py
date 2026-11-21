@@ -22,7 +22,7 @@ class Candidate(unittest.TestCase):
             os.makedirs(d)
             for n in files:
                 with open(os.path.join(d, n), "w") as f:
-                    f.write("b" * 64 + "\n" if n == "commit.txt" else f"data {kind} {n}\n")
+                    f.write(f"data {kind} {n}\n")
         self.manifest = os.path.join(self.tmp, "candidate.json")
 
     def tearDown(self):
@@ -73,11 +73,6 @@ class Candidate(unittest.TestCase):
             rc.create(self.parts, V, SHA, self.manifest)
         os.remove(self.part("windows", "SHA256SUMS-windows"))
         os.symlink(self.part("source", "SHA256SUMS-source"), self.part("windows", "SHA256SUMS-windows"))
-        with self.assertRaises(rc.CandidateError):
-            rc.create(self.parts, V, SHA, self.manifest)
-
-    def test_bad_commit_txt(self):
-        open(self.part("unsigned-repo", "commit.txt"), "w").write("nothex\n")
         with self.assertRaises(rc.CandidateError):
             rc.create(self.parts, V, SHA, self.manifest)
 

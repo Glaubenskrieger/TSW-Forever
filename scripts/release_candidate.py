@@ -4,8 +4,8 @@
   release_candidate.py create <parts-dir> --version V --commit SHA --out candidate.json
   release_candidate.py verify <parts-dir> candidate.json --version V --commit SHA
 
-<parts-dir> holds the downloaded artifacts, one folder per artifact, named tsw-forever-<V>-<kind>-<SHA> with kind in unsigned-repo, source, windows:
-  unsigned-repo: repo.tar, commit.txt     source: tsw-forever-<V>-src.tar.gz, SHA256SUMS-source     windows: tsw-forever-<V>-windows-setup.exe, SHA256SUMS-windows
+<parts-dir> holds the downloaded artifacts, one folder per artifact, named tsw-forever-<V>-<kind>-<SHA> with kind in flatpak, source, windows:
+  flatpak: tsw-forever-<V>.flatpak, SHA256SUMS-flatpak     source: tsw-forever-<V>-src.tar.gz, SHA256SUMS-source     windows: tsw-forever-<V>-windows-setup.exe, SHA256SUMS-windows
 `create` records the SHA-256 of every file; `verify` refuses a different version or commit, a missing or additional file, and any byte that differs. Exit 0 = ok. Writes nothing
 but --out; reads nothing but the given folders.
 """
@@ -21,7 +21,7 @@ SCHEMA = 1
 
 def expected(version):
     return {
-        "unsigned-repo": ["commit.txt", "repo.tar"],
+        "flatpak": [f"tsw-forever-{version}.flatpak", "SHA256SUMS-flatpak"],
         "source": [f"tsw-forever-{version}-src.tar.gz", "SHA256SUMS-source"],
         "windows": [f"tsw-forever-{version}-windows-setup.exe", "SHA256SUMS-windows"],
     }
@@ -68,9 +68,6 @@ def scan(parts, version, commit):
             if os.path.islink(p) or not os.path.isfile(p) or os.path.getsize(p) == 0:
                 raise CandidateError(f"{folder}/{n} is not a non-empty regular file")
             found[folder][n] = _sha(p)
-    repo_commit = open(os.path.join(parts, f"tsw-forever-{version}-unsigned-repo-{commit}", "commit.txt")).read().strip()
-    if not re.fullmatch(r"[0-9a-f]{64}", repo_commit):
-        raise CandidateError("commit.txt does not hold an OSTree commit checksum")
     return found
 
 

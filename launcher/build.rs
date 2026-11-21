@@ -17,7 +17,15 @@ fn conf(path: &Path) -> HashMap<String, String> {
 fn main() {
     println!("cargo:rerun-if-env-changed=TSW_CHANNEL");
     println!("cargo:rustc-check-cfg=cfg(channel_testing)");
+    println!("cargo:rustc-check-cfg=cfg(release_build)");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("packaging");
+    // Release or development build: decided by build metadata, not by the Flatpak branch. The release packaging (`TSW_RELEASE_BUILD=1 scripts/build_flatpak.sh ...`) puts the file
+    // `packaging/release-build` into the STAGED source tree only; a development build, a test run and the source archive never have it.
+    let release_marker = root.join("release-build");
+    println!("cargo:rerun-if-changed={}", release_marker.display());
+    if release_marker.is_file() {
+        println!("cargo:rustc-cfg=release_build");
+    }
     let channel = std::env::var("TSW_CHANNEL").unwrap_or_else(|_| "stable".into());
     let stable = conf(&root.join("channels").join("stable.conf"));
     let project = conf(&root.join("project.conf"));

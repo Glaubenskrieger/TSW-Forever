@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [0.4.1] – 2026-11-21
+
+`0.4.0` was built but never published (GitHub Pages could not serve the hosted Flatpak repository), so `0.4.1` follows `0.3.0` as the next public version and carries everything of the `0.4.0` entry below except the hosted Flatpak update source. The distribution is simplified: the web site is the one place for downloads, the files are assets of the GitHub release.
+
+### Changed
+
+- Simplified launcher distribution and update delivery.
+- Linux and Windows updates now direct users to the official download website: when a newer stable version is published, the launcher shows a notice whose button opens `https://glaubenskrieger.github.io/TSW-Forever/#download-linux` (Linux) or `#download-windows` (Windows). Neither platform installs a launcher update by itself any more; the Flatpak update portal client and the plain-hint fallback are gone (`launcher-gui/tests/update_paths.rs` guards this).
+- Replaced the hosted Flatpak OSTree update repository with downloadable Flatpak bundles: the release carries `tsw-forever-<version>.flatpak`, a plain single file (branch `local`, the branch of the earlier bundles, no update source, no key inside) that is installed and updated with `flatpak install --user <file>.flatpak`. The application ID and the user data folders are unchanged; a newer bundle installed over the old one (an installation of 0.3.0 or older too) is an in-place update: no second branch, and the settings and the game folder are kept (`scripts/e2e_flatpak_bundle.sh`).
+- GitHub Pages now carries the static web site only: no OSTree repository, summaries, objects, remote configuration or install files, so the Pages artifact is a few hundred kilobytes and independent of any release. The release files are linked straight from the web site.
+- The release workflow (`release.yml`) compiles nothing and holds no secret: guard, candidate verification, the approval of the whole release (environment `flatpak-release`, now for Linux and Windows together), a draft with the four release files, and publication behind the second approval (environment `release-publish`). The version must be newer than the newest published release.
+- `build.yml` deploys the web site independently of the builds and of any release.
+
+### Added
+
+- Direct downloads on the web site: a Linux (Flatpak) and a Windows (installer) button, both bound at run time to the files of the newest published stable release (no version number in the pages; drafts and pre-releases are never linked; before the first release the buttons are switched off with an explanation; if GitHub cannot be asked they open the list of releases), the SHA-256 of each file, and a visible link to all versions on GitHub. All six languages are complete.
+- `scripts/e2e_flatpak_bundle.sh`: an isolated end-to-end test of the bundle install and update path with the real Flatpak (fresh install, update over the old version without a second branch, user data untouched, same and older bundle, no update source).
+- Linux: the newer-version notice (Windows had it before). A release is told from a developer build by build metadata (`TSW_RELEASE_BUILD=1` stages `packaging/release-build`; the programs then carry a marker that the CI audit checks), not by the Flatpak branch, because both use the branch `local`; only the released Flatpak asks.
+
+### Removed
+
+- The signed Flatpak/OSTree repository and everything for hosting, mirroring, signing and proving it: GPG signing in the pipeline, the public key file, the static-delta and live-site checks, the key tools and their tests, the Pages carry-over of published data, the release rehearsal workflow and the repository settings `FLATPAK_REPO_URL` and the key pins in `packaging/project.conf` (`WEBSITE_URL` replaces them).
+
+### Security
+
+- Integrity of the downloads rests on `SHA256SUMS` and GitHub's release hosting; the Flatpak bundle carries no GPG signature and the Windows installer remains unsigned (see `documentation/security.md`). Flatpak installs an older bundle without a warning; the documentation names the newer bundle only.
+
 ## [0.4.0] – 2026-11-21
 
 Feature release after `0.3.0`, the last public version: four launcher languages (French, Spanish, Brazilian Portuguese, Polish) join English and German, a floating launcher-update overlay, window limits that stay correct under `SLINT_SCALE_FACTOR` on Linux, a quiet Windows notice about newer releases, an installer update mode, and stricter Flatpak signing, mirror, delta-update and release checks, run in CI. It also contains the maintenance changes of an internal intermediate version that was never published (the GitHub Actions updates and the installer-script fix, listed under Changed and Fixed).

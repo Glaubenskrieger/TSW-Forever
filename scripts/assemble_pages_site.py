@@ -1,183 +1,90 @@
 #!/usr/bin/env python3
-"""Assemble the GitHub Pages site of the public repository: the web site AND the signed Flatpak (OSTree) repository, together, in one output folder.
+"""Assemble the GitHub Pages site of the public repository: the STATIC WEB SITE and nothing else.
 
-GitHub Pages replaces the WHOLE site with every deployment. So the repository and the web site must never be deployed separately: each deployment is built here from
-(a) the web site sources kept in the Git repository (optional `--website`), (b) the OSTree repository of this release (with the earlier commits carried over by the
-release workflow), and (c) the install files. Each part has its own place and a name that the others may not use, so none can overwrite another:
+Since 0.4.1 GitHub Pages carries the web site only. The installation files (Flatpak bundle, Windows installer, source archive) are assets of the GitHub release; the page links to
+them at runtime. No Flatpak/OSTree repository, no install file for a Flatpak remote and no release file is ever put on Pages, so the Pages artifact is small and independent of any release.
 
-  /repo/                              the OSTree repository (served as static files; Flatpak reads /repo/summary, /repo/refs/..., /repo/objects/...)
-  /tsw-forever.flatpakrepo, /<app-id>.flatpakref   the install files
-  /channels.json                      the publish guard's record (optional)
-  /site-manifest.json                 SHA-256 of every file of repo/, the install files and channels.json: a later deployment of the web site alone re-fetches and verifies them
-                                      (scripts/preserve_live_site.py), so that a web site update never removes or changes published Flatpak data
-  /.nojekyll                          Pages must not run Jekyll over the repository files
-  /index.html and anything else       the web site (only if `--website` is given); names above are reserved and refused in the web site
+  assemble_pages_site.py --website <folder> --out <new folder>
 
-  assemble_pages_site.py --repo <ostree repo> --refs <folder with the install files> --out <new folder> [--website <folder>] [--channels-json <file>] [--app-id <id>]
-  assemble_pages_site.py --website-only --website <folder> --out <new folder>     (no Flatpak repository has been published yet: the web site alone)
-
-Refuses: a non-empty output folder, symbolic links anywhere, a repository without summary or without the stable ref, any ref or record that mentions testing (the public
-repository carries stable only), a web site that uses a reserved name, and a result that exceeds the Pages size limit. Writes only below --out. Exit 0 = assembled.
+Copies the web site into the new folder, adds `.nojekyll` and checks the result. Refuses: a missing web site or one without index.html, a non-empty output folder, symbolic links,
+any installation or repository file inside the web site (see FORBIDDEN_*), a file that is not plain web content, and a result above SIZE_LIMIT. Writes only below --out. Exit 0 = assembled.
 """
 import argparse
-import hashlib
-import json
 import os
-import re
 import shutil
 import sys
 
-APP_ID = "org.tswlauncher.Launcher"
-LIMIT = 900 * 1024 * 1024  # GitHub Pages: published sites may be no larger than 1 GB; keep a margin
-FILE_LIMIT = 90 * 1024 * 1024  # GitHub refuses files above 100 MB
-RESERVED = {"repo", "channels.json", ".nojekyll", "site-manifest.json"}
+SIZE_LIMIT = 8 * 1024 * 1024  # the web site is a few hundred kilobytes; a megabyte-sized surprise is refused
+FILE_LIMIT = 2 * 1024 * 1024
+# Names and folders that belong to a Flatpak repository, a Flatpak remote or a release: never on Pages
+FORBIDDEN_DIRS = {"repo", "objects", "refs", "deltas", "summaries", "delta-indexes", "state", "tmp"}
+FORBIDDEN_NAMES = {"summary", "summary.sig", "summary.idx", "summary.idx.sig", "config", "channels.json", "site-manifest.json", "SHA256SUMS"}
+FORBIDDEN_SUFFIXES = (".flatpak", ".flatpakref", ".flatpakrepo", ".exe", ".msi", ".gz", ".tar", ".zip", ".gpg", ".asc", ".sig", ".filez", ".dirtree", ".dirmeta", ".commit", ".commitmeta", ".key", ".pem")
+ALLOWED_SUFFIXES = (".html", ".css", ".js", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".ico", ".json", ".txt", ".woff2", ".webmanifest", ".xml")
 
 
 class SiteError(Exception):
     pass
 
 
-def _walk_files(root):
+def _walk(root):
     for d, dirs, files in os.walk(root):
         for n in dirs + files:
             p = os.path.join(d, n)
             if os.path.islink(p):
                 raise SiteError(f"symbolic link refused: {os.path.relpath(p, root)}")
-        for n in files:
-            yield os.path.join(d, n)
+        yield d, dirs, files
 
 
-def _tree_size(root):
+def check_website(website):
+    """Refuse anything that is not plain static web content; returns the total size."""
+    if website is None or not os.path.isdir(website):
+        raise SiteError("the web site folder is missing")
+    if not os.path.isfile(os.path.join(website, "index.html")):
+        raise SiteError("the web site folder needs an index.html")
     total = 0
-    for p in _walk_files(root):
-        size = os.path.getsize(p)
-        if size > FILE_LIMIT:
-            raise SiteError(f"file too large for GitHub: {os.path.relpath(p, root)} ({size} bytes)")
-        total += size
+    for d, dirs, files in _walk(website):
+        for n in dirs:
+            if n in FORBIDDEN_DIRS or n.startswith("."):
+                raise SiteError(f"a folder that belongs to a repository or a release is not part of the web site: {os.path.relpath(os.path.join(d, n), website)}")
+        for n in files:
+            rel = os.path.relpath(os.path.join(d, n), website)
+            low = n.lower()
+            if n in FORBIDDEN_NAMES or low.endswith(FORBIDDEN_SUFFIXES) or n.startswith("."):
+                raise SiteError(f"an installation or repository file is not part of the web site: {rel}")
+            if not low.endswith(ALLOWED_SUFFIXES):
+                raise SiteError(f"not a plain web file: {rel}")
+            size = os.path.getsize(os.path.join(d, n))
+            if size > FILE_LIMIT:
+                raise SiteError(f"file too large for a web page: {rel} ({size} bytes)")
+            total += size
+    if total > SIZE_LIMIT:
+        raise SiteError(f"the web site is {total} bytes: more than {SIZE_LIMIT}")
     return total
 
 
-def check_repo(repo, app_id):
-    if not os.path.isfile(os.path.join(repo, "summary")) or not os.path.isdir(os.path.join(repo, "objects")):
-        raise SiteError("the OSTree repository has no summary or no objects")
-    heads = os.path.join(repo, "refs", "heads")
-    if not os.path.isdir(heads):
-        raise SiteError("the OSTree repository has no refs/heads")
-    refs = []
-    for d, _, files in os.walk(heads):
-        for n in files:
-            refs.append(os.path.relpath(os.path.join(d, n), heads).replace(os.sep, "/"))
-    for r in refs:
-        if "testing" in r.lower():
-            raise SiteError(f"the public repository must not carry a testing ref: {r}")
-    want = f"app/{app_id}/x86_64/stable"
-    if want not in refs:
-        raise SiteError(f"the repository lacks the stable ref {want} (found: {sorted(refs)})")
-    commit = open(os.path.join(heads, want)).read().strip()
-    if not re.fullmatch(r"[0-9a-f]{64}", commit):
-        raise SiteError(f"the stable ref does not hold a commit checksum")
-
-
-def write_manifest(out):
-    """site-manifest.json: SHA-256 of repo/**, the install files and channels.json (everything that is not the web site)."""
-    files = {}
-    for p in _walk_files(out):
-        rel = os.path.relpath(p, out).replace(os.sep, "/")
-        if rel.startswith("repo/") or rel == "channels.json" or rel.endswith((".flatpakref", ".flatpakrepo")):
-            h = hashlib.sha256()
-            with open(p, "rb") as f:
-                for block in iter(lambda: f.read(1 << 20), b""):
-                    h.update(block)
-            files[rel] = h.hexdigest()
-    with open(os.path.join(out, "site-manifest.json"), "w", encoding="utf-8") as f:
-        json.dump({"schema": 1, "files": files}, f, indent=0, sort_keys=True)
-
-
-def assemble_website_only(out, website):
-    if website is None or not os.path.isdir(website):
-        raise SiteError("--website-only needs the web site folder")
-    if os.path.exists(out) and (not os.path.isdir(out) or os.listdir(out)):
-        raise SiteError(f"the output folder must be new or empty: {out}")
-    _tree_size(website)
-    for n in os.listdir(website):
-        if n in RESERVED or n.endswith((".flatpakrepo", ".flatpakref")):
-            raise SiteError(f"the web site uses a name that belongs to the Flatpak repository: {n}")
-    if not os.path.isfile(os.path.join(website, "index.html")):
-        raise SiteError("the web site has no index.html")
-    os.makedirs(out, exist_ok=True)
+def assemble(website, out):
+    total = check_website(website)
+    if os.path.exists(out) and os.listdir(out):
+        raise SiteError(f"output folder is not empty: {out}")
     shutil.copytree(website, out, dirs_exist_ok=True, symlinks=False)
-    open(os.path.join(out, ".nojekyll"), "w").close()
-    return _tree_size(out)
-
-
-def assemble(repo, refs, out, website=None, channels_json=None, app_id=APP_ID):
-    for label, p in (("repository", repo), ("install files", refs)):
-        if not os.path.isdir(p):
-            raise SiteError(f"{label} folder missing: {p}")
-    if os.path.exists(out) and (not os.path.isdir(out) or os.listdir(out)):
-        raise SiteError(f"the output folder must be new or empty: {out}")
-    check_repo(repo, app_id)
-    install_files = sorted(os.listdir(refs))
-    if not any(n.endswith(".flatpakrepo") for n in install_files) or f"{app_id}.flatpakref" not in install_files:
-        raise SiteError("the install files (.flatpakrepo and the stable .flatpakref) are missing")
-    if any("testing" in n.lower() for n in install_files):
-        raise SiteError("the public site must not carry testing install files")
-    reserved = RESERVED | set(install_files)
-    if website is not None:
-        if not os.path.isdir(website):
-            raise SiteError(f"web site folder missing: {website}")
-        _tree_size(website)  # refuses links and oversized files
-        for n in os.listdir(website):
-            if n in reserved or n.endswith((".flatpakrepo", ".flatpakref")):
-                raise SiteError(f"the web site uses a name that belongs to the Flatpak repository: {n}")
-    if channels_json is not None and "testing" in open(channels_json).read().lower():
-        raise SiteError("channels.json mentions testing")
-    _tree_size(repo)
-    os.makedirs(out, exist_ok=True)
-    if website is not None:
-        shutil.copytree(website, out, dirs_exist_ok=True, symlinks=False)
-    shutil.copytree(repo, os.path.join(out, "repo"), symlinks=False)
-    for n in install_files:
-        shutil.copy2(os.path.join(refs, n), os.path.join(out, n))
-    if channels_json is not None:
-        shutil.copy2(channels_json, os.path.join(out, "channels.json"))
-    open(os.path.join(out, ".nojekyll"), "w").close()
-    if not os.path.exists(os.path.join(out, "index.html")):
-        with open(os.path.join(out, "index.html"), "w") as f:
-            f.write("<!doctype html><meta charset=utf-8><title>TSW-Forever Flatpak repository</title>"
-                    "<p>Install: <code>flatpak install --user tsw-forever.flatpakrepo</code> or open "
-                    f"<code>{app_id}.flatpakref</code> with your software center.</p>\n")
-    total = _tree_size(out)
-    if total > LIMIT:
-        raise SiteError(f"the site is {total} bytes; GitHub Pages allows 1 GB")
-    check_repo(os.path.join(out, "repo"), app_id)
-    write_manifest(out)
+    with open(os.path.join(out, ".nojekyll"), "w", encoding="utf-8") as f:
+        f.write("")
     return total
 
 
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--repo")
-    ap.add_argument("--refs")
-    ap.add_argument("--website-only", action="store_true")
+    ap.add_argument("--website", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--website")
-    ap.add_argument("--channels-json")
-    ap.add_argument("--app-id", default=APP_ID)
     a = ap.parse_args(argv)
     try:
-        if a.website_only:
-            if a.repo or a.refs or a.channels_json:
-                raise SiteError("--website-only takes no repository, install files or channels.json")
-            total = assemble_website_only(a.out, a.website)
-        else:
-            if not a.repo or not a.refs:
-                raise SiteError("--repo and --refs are required (or --website-only)")
-            total = assemble(a.repo, a.refs, a.out, a.website, a.channels_json, a.app_id)
+        total = assemble(a.website, a.out)
     except (SiteError, OSError) as e:
         print(f"assemble_pages_site: {e}", file=sys.stderr)
         return 1
-    print(f"site assembled in {a.out} ({total} bytes)")
+    count = sum(len(files) for _, _, files in os.walk(a.out))
+    print(f"site assembled in {a.out}: {count} files, {total} bytes (web site only)")
     return 0
 
 

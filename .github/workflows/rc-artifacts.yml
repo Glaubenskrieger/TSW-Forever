@@ -53,7 +53,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev libxi-dev ostree gnupg
+          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev libxi-dev ostree
       - name: Allow the unprivileged user namespaces that flatpak-builder (bubblewrap) needs on Ubuntu 24.04 (setting of this runner VM only)
         run: |
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
@@ -72,7 +72,7 @@ jobs:
         run: scripts/build_flatpak.sh fetch --allow-network
       - name: Tests (launcher, GUI, patcher, packaging policy and the release scripts) - before any artifact is built
         env:
-          TSW_REQUIRE_TOOLS: "1"  # the signing, mirror, delta and release tests must run here (ostree and gnupg are installed above), never be skipped for a missing program
+          TSW_REQUIRE_TOOLS: "1"  # the Flatpak and release tests must run here (flatpak is installed above), never be skipped for a missing program
         run: |
           scripts/build_flatpak.sh test
           python3 -I scripts/test_check_release_artifacts.py
@@ -140,11 +140,11 @@ jobs:
           set="build/rc"
           branch="${FLATPAK_BRANCH:-local}"
           flatpak install --user --noninteractive "$set/tsw-forever-${version}.flatpak"
-          if [ "$branch" = stable ]; then
-            # a stable bundle knows its update source: the project's repository is configured as the remote
-            . packaging/project.conf
-            flatpak remotes --user --columns=url | grep -qx "$FLATPAK_REPO_URL" || { echo "the stable bundle did not configure the update source $FLATPAK_REPO_URL" >&2; exit 1; }
-          fi
+          # a release candidate set is a development artifact, not a release build: its programs must not carry the release marker (the release comes from flatpak-stable-build.yml)
+          rcfiles="$HOME/.local/share/flatpak/app/org.tswlauncher.Launcher/x86_64/$branch/active/files"
+          if grep -aq 'tsw-forever-release-build' "$rcfiles/bin/tsw-launch" "$rcfiles/bin/tsw-launcher"; then echo "a development bundle carries the release build marker" >&2; exit 1; fi
+          # no bundle knows an update source (no hosted repository exists): a launcher update is a newer bundle that the user installs
+          if flatpak remotes --user --columns=url | grep -qi 'github.io'; then echo "the bundle configured an update source: there must be none" >&2; exit 1; fi
           reported="$(flatpak run --command=tsw-launch "org.tswlauncher.Launcher//$branch" --version)"
           echo "$reported"
           case "$reported" in *"$version"*) ;; *) echo "the installed Flatpak reports another version than $version" >&2; exit 1;; esac

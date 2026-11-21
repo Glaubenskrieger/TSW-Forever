@@ -4,3 +4,5 @@
 **/target/
 **/__pycache__/
 *.pyc
+# marks a RELEASE build; created in the staged tree by scripts/build_flatpak.sh (TSW_RELEASE_BUILD=1), never committed
+/packaging/release-build

@@ -8,8 +8,6 @@
 // Windows: a normal GUI program without a console window (the command-line tool `tsw-launch.exe` keeps its console; diagnostics go to log files).
 #![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
-#[cfg(target_os = "linux")]
-mod flatpak_update;
 mod i18n;
 mod messages;
 mod model;
@@ -108,20 +106,14 @@ struct State {
     run_active: bool,
     /// The last run ended after the patcher announced that it is done and wrote nothing big any more (see `install::RunWatch`).
     run_ok: bool,
-    /// The launcher update (Flatpak): what the window shows and the portal handle.
+    /// The launcher update notice: what the window shows.
     update: UpdateState,
 }
 
-/// The launcher update through the Flatpak update portal. Offline or without a portal nothing here ever shows.
+/// The launcher update. The launcher never installs an update on any platform: it only knows whether a newer version exists and opens the download area of the web site.
 #[derive(Default)]
 struct UpdateState {
-    phase: tsw_launch::update::flatpak::Phase,
-    scope: Option<tsw_launch::update::flatpak::Scope>,
-    /// "Later" was pressed: the offer is hidden until the next start.
-    dismissed: bool,
-    #[cfg(target_os = "linux")]
-    handle: Option<flatpak_update::Handle>,
-    /// Windows: a newer stable version exists (a notice only: the user installs it by hand from the official release page; see `tsw_launch::releasenotice`).
+    /// A newer stable version exists (a notice only: the user downloads it from the official web site; see `tsw_launch::releasenotice`).
     notice: Option<tsw_launch::releasenotice::Notice>,
     /// Windows, development feature only: the launcher update through the signed installer (see `tsw_launch::update::windows`).
     #[cfg(feature = "windows-self-update")]
@@ -232,9 +224,10 @@ fn render(ui: &MainWindow, st: &State) {
         None => ui.set_status_text(SharedString::new()),
     }
     ui.set_message(sstr(st.view.message.as_ref().map(|m| cat.render(m)).unwrap_or_default()));
-    let banner = model::update_banner(&st.update.phase, st.update.scope, st.update.dismissed);
     #[cfg(feature = "windows-self-update")]
-    let banner = banner.or_else(|| model::windows_update_banner(&st.update.win, st.update.win_offer.as_ref().is_some_and(|o| o.previous.is_some()), st.update.win_dismissed));
+    let banner = model::windows_update_banner(&st.update.win, st.update.win_offer.as_ref().is_some_and(|o| o.previous.is_some()), st.update.win_dismissed);
+    #[cfg(not(feature = "windows-self-update"))]
+    let banner = None;
     let banner = banner.or_else(|| model::release_notice_banner(st.update.notice.as_ref()));
     match banner {
         Some(b) => {
@@ -327,43 +320,43 @@ fn post(weak: &slint::Weak<MainWindow>, state: &Shared, f: impl FnOnce(&MainWind
     });
 }
 
-/// Ask the portal to install the update. `false` = there is no portal handle (the monitor could not be started, or this is not a Flatpak).
-#[cfg(target_os = "linux")]
-fn request_launcher_update(weak: &slint::Weak<MainWindow>, state: &Shared, st: &State) -> bool {
-    let Some(h) = st.update.handle.clone() else { return false };
-    let (weak, state) = (weak.clone(), state.clone());
-    h.request_update(move |e| update_event(&weak, &state, e));
-    true
-}
-
-/// Without Flatpak (Windows, other systems) there is no launcher update through the portal.
-#[cfg(not(target_os = "linux"))]
-fn request_launcher_update(_weak: &slint::Weak<MainWindow>, _state: &Shared, _st: &State) -> bool {
-    false
-}
-
-/// Windows: ask the official release page once at start whether a newer stable version exists and show a quiet notice if so. Only a notice: nothing is downloaded,
-/// installed or run, nothing needs administrator rights, and offline or any unexpected answer leaves the window as it was (see `tsw_launch::releasenotice`).
-#[cfg(windows)]
+/// Linux and Windows: ask the published release metadata once at start whether a newer stable version exists and show a quiet notice if so. Only a notice: nothing is downloaded,
+/// installed or run, nothing needs administrator rights, and offline or any unexpected answer leaves the window as it was (see `tsw_launch::releasenotice`). On Linux only the
+/// release build of the Flatpak asks (build metadata, not the branch name: a developer build, a native run or an installation that does not fit this build stays silent).
 fn start_release_notice_check(ui: &MainWindow, state: &Shared) {
+    use tsw_launch::releasenotice::{self, Platform};
+    let platform = Platform::current();
     if tsw_launch::channel::build() != tsw_launch::channel::Channel::Stable {
+        return;
+    }
+    if platform == Platform::Linux
+        && !releasenotice::linux_eligible(std::fs::read_to_string("/.flatpak-info").ok().as_deref(), tsw_launch::channel::build(), tsw_launch::channel::APP_ID, tsw_launch::channel::RELEASE_BUILD)
+    {
         return;
     }
     let curl = doctor::find_program(Path::new("curl"), std::env::var_os("PATH").as_deref()).unwrap_or_else(|| PathBuf::from("curl"));
     let (weak, state) = (ui.as_weak(), state.clone());
     std::thread::spawn(move || {
-        let fetch = tsw_launch::releasenotice::CurlHead { curl };
-        if let Some(notice) = tsw_launch::releasenotice::check(&fetch, tsw_launch::channel::build(), tsw_launch::project::REPO_URL, tsw_launch::project::APP_VERSION) {
+        let fetch = releasenotice::CurlHead { curl };
+        let page = releasenotice::download_page(tsw_launch::project::WEBSITE_URL, platform);
+        if let Some(notice) = releasenotice::check(&fetch, tsw_launch::channel::build(), tsw_launch::project::REPO_URL, tsw_launch::project::APP_VERSION, &page) {
             post(&weak, &state, move |_, st| st.update.notice = Some(notice));
         }
     });
 }
 
-/// Open the official release page of a notice in the default browser. Only an address under `<repo>/releases/tag/v` is ever opened (defence in depth: the notice already
-/// carries an address built from that prefix). Nothing is downloaded or run by the launcher.
-fn open_release_page(url: &str) -> bool {
-    if !url.starts_with(&format!("{}/releases/tag/v", tsw_launch::project::REPO_URL)) || url.chars().any(|c| !(c.is_ascii_alphanumeric() || matches!(c, ':' | '/' | '.' | '-'))) {
+/// Open the download area of the official web site in the default browser (Windows: the shell; Linux: `xdg-open`, which inside the Flatpak goes through the desktop portal). Only
+/// `<site>#download-linux` and `<site>#download-windows` are ever opened (defence in depth: the notice already carries an address built from the site constant). Nothing is
+/// downloaded or run by the launcher.
+fn open_download_page(url: &str) -> bool {
+    let allowed = [tsw_launch::releasenotice::Platform::Linux, tsw_launch::releasenotice::Platform::Windows].map(|p| tsw_launch::releasenotice::download_page(tsw_launch::project::WEBSITE_URL, p));
+    if !allowed.iter().any(|a| a == url) {
         return false;
+    }
+    #[cfg(test)]
+    {
+        OPENED_PAGES.lock().unwrap().push(url.to_string());
+        true
     }
     #[cfg(all(windows, not(test)))]
     {
@@ -373,69 +366,15 @@ fn open_release_page(url: &str) -> bool {
         // explorer reports exit code 1 even when it has opened the page, so only a failure to start counts
         cmd.spawn().is_ok()
     }
-    // tests never start a browser; they only record the address; systems other than Windows show no notice at all
-    #[cfg(test)]
-    {
-        OPENED_PAGES.lock().unwrap().push(url.to_string());
-        true
-    }
     #[cfg(all(not(windows), not(test)))]
     {
-        false
+        std::process::Command::new("xdg-open").arg(url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().is_ok()
     }
 }
 
 /// Test double of the browser: the addresses `open_release_page` was asked to open.
 #[cfg(test)]
 static OPENED_PAGES: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-/// A signal of the Flatpak update portal, on the UI thread.
-#[cfg(target_os = "linux")]
-fn update_event(weak: &slint::Weak<MainWindow>, state: &Shared, e: tsw_launch::update::flatpak::Event) {
-    post(weak, state, move |_, st| {
-        st.update.phase = tsw_launch::update::flatpak::reduce(&st.update.phase, &e);
-        // an offer the user did not wait for is shown again only when something new happens
-        if matches!(e, tsw_launch::update::flatpak::Event::Progress { .. }) {
-            st.update.dismissed = false;
-        }
-    });
-}
-
-/// Start the launcher update check where it applies (see `tsw_launch::update::flatpak::eligibility`). Everything happens on a worker thread; a failure
-/// of any kind leaves the window as it was.
-#[cfg(target_os = "linux")]
-fn start_launcher_update(ui: &MainWindow, state: &Shared) {
-    use tsw_launch::update::flatpak::{eligibility, Eligibility};
-    let info = std::fs::read_to_string("/.flatpak-info").ok();
-    let scope = match eligibility(info.as_deref(), tsw_launch::channel::build(), tsw_launch::channel::APP_ID) {
-        Eligibility::Eligible(scope) => scope,
-        // not a Flatpak, no update source, or an installation that does not fit this build: no update offer
-        _ => return,
-    };
-    let (weak, state) = (ui.as_weak(), state.clone());
-    std::thread::spawn(move || {
-        let (weak2, state2) = (weak.clone(), state.clone());
-        match flatpak_update::start(None, move |e| update_event(&weak2, &state2, e)) {
-            Ok(handle) => post(&weak, &state, move |_, st| {
-                st.update.scope = Some(scope);
-                st.update.handle = Some(handle);
-            }),
-            // no update portal (an old Flatpak): the former plain hint, from the repository's published commit
-            Err(_) => {
-                let curl = doctor::find_program(Path::new("curl"), std::env::var_os("PATH").as_deref()).unwrap_or_else(|| PathBuf::from("curl"));
-                let status = tsw_launch::selfupdate::check(Path::new("/.flatpak-info"), &curl, tsw_launch::project::FLATPAK_REPO_URL, &tsw_launch::project::flatpak_ref_for("stable"));
-                if matches!(status, tsw_launch::selfupdate::Status::Available { .. }) {
-                    post(&weak, &state, |_, st| {
-                        st.view.message = Some(Msg::new(
-                            "A launcher update is available. Install it with your system\'s software center, or run: flatpak update {0}. Then restart the launcher.",
-                            [tsw_launch::project::APP_ID.to_string()],
-                        ))
-                    });
-                }
-            }
-        }
-    });
-}
 
 fn set_status(st: &mut State, msg: Msg, kind: i32) {
     st.view.status = Some((msg, kind));
@@ -868,44 +807,28 @@ fn wire(ui: &MainWindow, state: &Shared, may_close: &Arc<AtomicBool>) {
         });
     }
     {
-        // the user's decision to install the launcher update (or, after it was installed, to close the launcher so that the new version starts next time)
-        let (weak, may_close, state) = (ui.as_weak(), may_close.clone(), state.clone());
+        // the button of the notice: it only opens the download area of the official web site for this platform. No launcher update is ever installed from here.
+        let (weak, state) = (ui.as_weak(), state.clone());
+        #[cfg(feature = "windows-self-update")]
+        let may_close = may_close.clone();
         ui.on_update_action(move || {
-            use tsw_launch::update::flatpak::{reduce, Event, Phase};
             let Some(ui) = weak.upgrade() else { return };
             let mut st = state.lock().unwrap();
-            if st.update.phase == Phase::RestartNeeded {
-                st.install_cancel.store(true, Ordering::SeqCst);
-                drop(st);
-                leave(&ui, &may_close);
+            #[cfg(feature = "windows-self-update")]
+            if let Some(installer) = st.update.win_offer.as_ref().map(|o| o.installer.clone()) {
+                if matches!(st.update.win, tsw_launch::update::windows::Phase::Available | tsw_launch::update::windows::Phase::Failed(_)) {
+                    // (development feature only; no product build contains it)
+                    win_update::start_windows_update(&weak, &state, &may_close, &mut st, installer);
+                    render(&ui, &st);
+                }
                 return;
             }
-            if st.update.phase == Phase::Idle {
-                // the Flatpak phase is idle on Windows (and everywhere the portal is not used)
-                #[cfg(feature = "windows-self-update")]
-                if let Some(installer) = st.update.win_offer.as_ref().map(|o| o.installer.clone()) {
-                    if matches!(st.update.win, tsw_launch::update::windows::Phase::Available | tsw_launch::update::windows::Phase::Failed(_)) {
-                        win_update::start_windows_update(&weak, &state, &may_close, &mut st, installer);
-                        render(&ui, &st);
-                    }
-                    return;
-                }
-                // Windows: the notice that a newer version exists. The button only opens the official release page; the user installs the new installer by hand.
-                if let Some(notice) = st.update.notice.clone() {
-                    if !open_release_page(&notice.url) {
-                        st.view.message = Some(Msg::new("The release page could not be opened. Open {0} in your browser.", [notice.url]));
-                        render(&ui, &st);
-                    }
-                    return;
+            if let Some(notice) = st.update.notice.clone() {
+                if !open_download_page(&notice.url) {
+                    st.view.message = Some(Msg::new("The release page could not be opened. Open {0} in your browser.", [notice.url]));
+                    render(&ui, &st);
                 }
             }
-            st.update.phase = reduce(&st.update.phase, &Event::Requested);
-            st.update.dismissed = false;
-            if !request_launcher_update(&weak, &state, &st) {
-                // no update service (no portal handle, or not a Flatpak at all): the retry ends as a visible failure, never as an install that never finishes
-                st.update.phase = Phase::Failed(tsw_launch::update::flatpak::Failure::Other("the update service of Flatpak is not available".into()));
-            }
-            render(&ui, &st);
         });
     }
     #[cfg(feature = "windows-self-update")]
@@ -924,16 +847,14 @@ fn wire(ui: &MainWindow, state: &Shared, may_close: &Arc<AtomicBool>) {
             }
         });
     }
+    #[cfg(feature = "windows-self-update")]
     {
+        // (development feature only) "Later" hides the offer or the error until the next start; the notice of a newer version has no such button
         let (weak, state) = (ui.as_weak(), state.clone());
         ui.on_update_dismiss(move || {
             let Some(ui) = weak.upgrade() else { return };
             let mut st = state.lock().unwrap();
-            st.update.dismissed = true;
-            #[cfg(feature = "windows-self-update")]
-            {
-                st.update.win_dismissed = true;
-            }
+            st.update.win_dismissed = true;
             render(&ui, &st);
         });
     }
@@ -2077,13 +1998,10 @@ fn main() -> Result<(), slint::PlatformError> {
         refresh_install(&ui, &state, &mut st);
         render(&ui, &st);
     }
-    // Launcher update (Flatpak only; silent when offline, without a portal or where the package has no update source): the HOST's Flatpak does the
-    // actual, signed update through the update portal, after the user agreed. A package without an update source (a local build, a testing package) shows nothing.
-    #[cfg(target_os = "linux")]
-    start_launcher_update(&ui, &state);
+    // Launcher update notice (Linux and Windows alike; silent when offline): a newer stable version only shows a notice whose button opens the web site's download area.
+    // Nothing is installed by the launcher. A developer build, a testing build or a native Linux run shows nothing.
     #[cfg(all(windows, feature = "windows-self-update"))]
     win_update::start_windows_update_check(&ui, &state);
-    #[cfg(windows)]
     start_release_notice_check(&ui, &state);
     let may_close = Arc::new(AtomicBool::new(false));
     ui.set_game_ends_with_launcher(tsw_launch::gamescope::in_flatpak(Path::new("/.flatpak-info"), std::env::var_os("FLATPAK_ID").as_deref()));

@@ -118,7 +118,7 @@ BUILDER_HOST_PACKAGES = ("elfutils", "librsvg2-common")
 def _builder_host_tools(text, label):
     """A workflow that builds the Flatpak must install the packages of BUILDER_HOST_PACKAGES in the same `apt-get install` line as flatpak-builder."""
     lines = re.findall(r"apt-get\s+install[^\n]*", text)
-    builds = re.search(r"build_flatpak\.sh\s+(build|bundle|stable-repo|all)\b", text) or any("flatpak-builder" in l for l in lines)
+    builds = re.search(r"build_flatpak\.sh\s+(build|bundle|all)\b", text) or any("flatpak-builder" in l for l in lines)
     if not builds:
         return []
     install = next((l for l in lines if "flatpak-builder" in l), "")
@@ -159,7 +159,7 @@ def check_workflow(text, manifest):
     return errs
 
 
-BUILD_MARKERS = re.compile(r"flatpak-builder|build_flatpak\.sh\s+(build|bundle|stable-repo|all|vendor)\b|flatpak\s+build-|actions/upload-artifact|upload-pages-artifact|deploy-pages|ostree\s+(commit|pull)")
+BUILD_MARKERS = re.compile(r"flatpak-builder|build_flatpak\.sh\s+(build|bundle|all|vendor)\b|flatpak\s+build-|actions/upload-artifact|upload-pages-artifact|deploy-pages|ostree\s+(commit|pull)")
 MAIN_GUARD = "github.ref == 'refs/heads/main'"
 
 
@@ -253,7 +253,7 @@ def check_rc_workflow(text, manifest):
         (r"\bsudo\b(?!\s+(apt-get\s+(update|install)|sysctl\s+-w\s+kernel\.apparmor_restrict_unprivileged_userns=0\b))", "sudo only for apt-get and the AppArmor user-namespace setting on the CI runner"),
         (r"permissions:\s*\n\s+(contents|packages|id-token|pages|actions|deployments|releases):\s*write", "write permissions are not allowed"),
         (r"pull_request_target|workflow_run|\bschedule:", "only a manual start is allowed"),
-        (r"deploy-pages|upload-pages-artifact|stable-repo", "nothing is published from this workflow"),
+        (r"deploy-pages|upload-pages-artifact", "nothing is published from this workflow"),
     ]:
         if re.search(pat, text, re.I):
             errs.append(f"rc workflow: {why} ({pat})")
@@ -318,11 +318,9 @@ OWNER_GUARD_PARTS = ("github.actor == github.repository_owner", "github.triggeri
 RELEASE_ASSETS = ("tsw-forever-${version}.flatpak", "tsw-forever-${version}-src.tar.gz", "tsw-forever-${version}-windows-setup.exe", "dist/SHA256SUMS")
 
 
-SIGN_JOB_APT = {"flatpak", "ostree", "gnupg", "gpg-agent", "python3"}
-RELEASE_JOBS = ["candidate", "deploy", "draft", "guard", "pages-build", "publish", "sign", "verify-live", "verify-signed"]
+RELEASE_JOBS = ["approve", "candidate", "draft", "guard", "publish"]
 NEEDS = {  # job: the jobs it must (at least) wait for; the chain is what keeps anything public behind both approvals
-    "candidate": ["guard"], "sign": ["guard", "candidate"], "verify-signed": ["candidate", "sign"], "draft": ["candidate", "verify-signed"],
-    "pages-build": ["sign", "draft"], "deploy": ["pages-build"], "verify-live": ["deploy", "sign"], "publish": ["draft", "verify-live"],
+    "candidate": ["guard"], "approve": ["guard", "candidate"], "draft": ["candidate", "approve"], "publish": ["draft"],
 }
 
 
@@ -336,9 +334,10 @@ def _perms(job):
 
 
 def check_tag_release_workflow(doc):
-    """The single tag-triggered release PIPELINE (release.yml): started only by an owner-pushed numeric version tag. It builds on machines without any key, signs in ONE job behind the
-    environment `flatpak-release` (approval 1), fills a DRAFT release, deploys Pages, checks the live source and publishes the draft only in the job behind the environment
-    `release-publish` (approval 2). The key is referenced in one step of one job; write permissions exist only where they are needed; nothing is chained by another workflow."""
+    """The single tag-triggered release PIPELINE (release.yml): started only by an owner-pushed numeric version tag. It compiles nothing, verifies the candidate that build.yml built for
+    exactly that commit, waits for the owner's approval of the whole release (environment `flatpak-release`, approval 1), fills a DRAFT release and publishes the draft only in the job
+    behind the environment `release-publish` (approval 2). It uses no secret, no variable and no key; write permissions exist only where they are needed; nothing is chained by
+    another workflow; GitHub Pages is not touched."""
     errs = []
     trig = _triggers(doc)
     text = repr(doc)
@@ -348,6 +347,10 @@ def check_tag_release_workflow(doc):
         errs.append("release.yml: the workflow-level permissions must be exactly contents: read")
     if re.search(r"git push|git tag|create-release|action-gh-release|secrets:\s*inherit|'secrets': 'inherit'|pull_request", text):
         errs.append("release.yml: no push, no tag creation, no third-party release action, no inherited secrets")
+    if re.search(r"secrets\.|vars\.", text):
+        errs.append("release.yml: no secret and no variable (there is no signing key any more)")
+    if re.search(r"gpg|--gpg-sign|flatpak_sign|flatpak_keys|ostree|deploy-pages|upload-pages-artifact|pages-build", text):
+        errs.append("release.yml: no signing, no OSTree and no GitHub Pages deployment (Pages holds the static web site only; build.yml deploys it)")
     jobs = doc.get("jobs") or {}
     if sorted(jobs) != RELEASE_JOBS:
         errs.append(f"release.yml: the jobs are exactly {', '.join(RELEASE_JOBS)} (found {sorted(jobs)})")
@@ -357,8 +360,8 @@ def check_tag_release_workflow(doc):
         for part in OWNER_GUARD_PARTS:
             if part not in cond:
                 errs.append(f"release.yml: job {jname} lacks the guard part {part!r} (owner-pushed tag only)")
-        if jname not in ("sign", "publish", "deploy") and "environment" in job:
-            errs.append(f"release.yml: job {jname} must not use an environment (only sign, deploy and publish do)")
+        if jname not in ("approve", "publish") and "environment" in job:
+            errs.append(f"release.yml: job {jname} must not use an environment (only approve and publish do)")
         for dep in NEEDS.get(jname, []):
             if dep not in _needs(job):
                 errs.append(f"release.yml: job {jname} must need {dep}")
@@ -366,12 +369,6 @@ def check_tag_release_workflow(doc):
         if jname in ("draft", "publish"):
             if perms != {"contents": "write"}:
                 errs.append(f"release.yml: job {jname} needs exactly contents: write (found {perms})")
-        elif jname == "deploy":
-            if perms != {"pages": "write", "id-token": "write"}:
-                errs.append(f"release.yml: job deploy needs exactly pages: write and id-token: write (found {perms})")
-        elif jname == "sign":
-            if perms != {"contents": "read", "actions": "read"}:
-                errs.append(f"release.yml: job sign has exactly contents: read and actions: read (found {perms}): no write permission where the key is")
         elif any(v == "write" for v in perms.values()):
             errs.append(f"release.yml: job {jname} must not have write permissions")
         for st in job.get("steps") or []:
@@ -379,7 +376,7 @@ def check_tag_release_workflow(doc):
             if "${{ github.event" in run or "${{ github.ref_name" in run:
                 errs.append(f"release.yml: job {jname}: context values reach scripts through env:, never interpolated into a shell script")
     # nothing is built at the tag: the candidate of the build run of exactly this commit is verified and taken over (build.yml built it when the commit was pushed to main)
-    if re.search(r"flatpak-stable-build|windows\.yml|build_flatpak\.sh (build|stable-repo|vendor|test)|cargo (build|test)|flatpak-builder", text):
+    if re.search(r"flatpak-stable-build|windows\.yml|build_flatpak\.sh (build|bundle|vendor|test)|cargo (build|test)|flatpak-builder", text):
         errs.append("release.yml: the release tag compiles and tests nothing (the candidate was built by build.yml when the commit was pushed)")
     cand = jobs["candidate"]
     ctext = repr(cand)
@@ -389,69 +386,24 @@ def check_tag_release_workflow(doc):
             errs.append(f"release.yml: job candidate must {why} ({need!r} missing)")
     if _perms(cand) != {"contents": "read", "actions": "read"}:
         errs.append("release.yml: job candidate has exactly contents: read and actions: read")
-    if "secrets." in ctext or "vars." in ctext or "environment" in cand:
-        errs.append("release.yml: job candidate uses no secret, no variable and no environment")
-    # the key: referenced in exactly one step of exactly one job, behind the environment of approval 1
-    key_refs = [(jn, i) for jn, j in jobs.items() for i, st in enumerate(j.get("steps") or []) if re.search(r"secrets\.|vars\.", repr(st))]
-    if len(key_refs) != 1 or key_refs[0][0] != "sign":
-        errs.append(f"release.yml: secrets and variables are referenced in exactly one step of the job sign (found {key_refs})")
-    if re.search(r"secrets\.(?!TSW_FLATPAK_SIGNING_(KEY|PASSPHRASE)\b)", text):
-        errs.append("release.yml: the only secrets are TSW_FLATPAK_SIGNING_KEY and TSW_FLATPAK_SIGNING_PASSPHRASE")
-    if re.search(r"vars\.(?!TSW_FLATPAK_SIGNING_(FINGERPRINT|SUBKEY_ID)\b)", text):
-        errs.append("release.yml: the only variables are TSW_FLATPAK_SIGNING_FINGERPRINT and TSW_FLATPAK_SIGNING_SUBKEY_ID")
-    sign = jobs["sign"]
-    if sign.get("environment") != "flatpak-release":
-        errs.append("release.yml: the job sign uses the environment flatpak-release (approval 1) and nothing else")
-    steps = sign.get("steps") or []
-    keystep = [st for st in steps if "secrets." in repr(st)]
-    if len(keystep) == 1:
-        st = keystep[0]
-        env = st.get("env") or {}
-        want = {"TSW_FLATPAK_SIGNING_KEY": "secrets.TSW_FLATPAK_SIGNING_KEY", "TSW_FLATPAK_SIGNING_PASSPHRASE": "secrets.TSW_FLATPAK_SIGNING_PASSPHRASE",
-                "TSW_FLATPAK_SIGNING_FINGERPRINT": "vars.TSW_FLATPAK_SIGNING_FINGERPRINT", "TSW_FLATPAK_SIGNING_SUBKEY_ID": "vars.TSW_FLATPAK_SIGNING_SUBKEY_ID"}
-        if sorted(env) != sorted(want) or any(want[k] not in str(env.get(k)) for k in want):
-            errs.append("release.yml: the signing step's env is exactly TSW_FLATPAK_SIGNING_KEY and TSW_FLATPAK_SIGNING_PASSPHRASE (secrets), TSW_FLATPAK_SIGNING_FINGERPRINT and TSW_FLATPAK_SIGNING_SUBKEY_ID (variables)")
-        run = str(st.get("run", "")).strip()
-        if run != "scripts/flatpak_sign_ci.sh build/flatpak/repo packaging/flatpak/stable-repo.gpg":
-            errs.append("release.yml: the step that holds the key runs only scripts/flatpak_sign_ci.sh build/flatpak/repo packaging/flatpak/stable-repo.gpg")
-        if "uses" in st:
-            errs.append("release.yml: the step that holds the key is a run step, not an action")
-        idx = steps.index(st)
-        for later in steps[idx + 1:]:
-            if "uses" in later and "upload-artifact" not in str(later["uses"]):
-                errs.append("release.yml: after the signing step only the pinned upload-artifact action may follow")
-    else:
-        errs.append("release.yml: the job sign needs exactly one step that references the key")
-    for st in steps:
-        used = str(st.get("uses", ""))
-        if used and not re.match(r"actions/(checkout|upload-artifact)@[0-9a-f]{40}$", used.split(" ")[0]):
-            errs.append(f"release.yml: the job sign may use only the GitHub actions checkout and upload-artifact, pinned (found {used})")
-        run = str(st.get("run", ""))
-        if re.search(r"build_flatpak|cargo|flatpak-builder|\bpip\b|\bnpm\b|\bbun\b|curl[^\n]*\|\s*(ba)?sh|git (push|tag|commit)|xtrace|set\s+-[a-z]*x|ACTIONS_STEP_DEBUG|ACTIONS_RUNNER_DEBUG", run):
-            errs.append("release.yml: the job sign signs only: no build, no downloaded code, no tracing")
-        if re.search(r"ACTIONS_STEP_DEBUG|ACTIONS_RUNNER_DEBUG|RUNNER_DEBUG", repr(st)):
-            errs.append("release.yml: the job sign sets no debug logging variable")
-        if re.search(r"TSW_FLATPAK_SIGNING_(KEY|PASSPHRASE)", run):
-            errs.append("release.yml: the key and the passphrase are only in the env of the signing step, never in a command")
-    installed = _apt_packages(str(st.get("run", "")) for st in steps)
-    if installed - SIGN_JOB_APT:
-        errs.append(f"release.yml: the job sign installs only {sorted(SIGN_JOB_APT)} (found extra {sorted(installed - SIGN_JOB_APT)})")
-    signed_upload = [i for i, st in enumerate(steps) if "upload-artifact" in str(st.get("uses", ""))]
-    keyidx = [i for i, st in enumerate(steps) if "secrets." in repr(st)]
-    if signed_upload and keyidx and (len(signed_upload) != 1 or signed_upload[0] < keyidx[0] or (steps[signed_upload[0]].get("with") or {}).get("path") != "build/signed/"):
-        errs.append("release.yml: the job sign uploads once, after the signing step, only build/signed/")
-    # publication: only through the script, only in the job behind approval 2, and never before the live check
+    if "environment" in cand:
+        errs.append("release.yml: job candidate uses no environment")
+    # the two human approvals: the environments with their required reviewers. Neither may be removed, renamed or bypassed.
+    approve = jobs["approve"]
+    if approve.get("environment") != "flatpak-release":
+        errs.append("release.yml: the job approve uses the environment flatpak-release (approval 1 of the whole release) and nothing else")
+    if any("uses" in st for st in approve.get("steps") or []) or re.search(r"scripts/|secrets\.|checkout", repr(approve)):
+        errs.append("release.yml: the job approve runs no action and no project code: it only waits for the approval")
     pub = jobs["publish"]
     if pub.get("environment") != "release-publish":
         errs.append("release.yml: the job publish uses the environment release-publish (approval 2)")
-    if jobs["deploy"].get("environment") not in ({"name": "github-pages", "url": "${{ steps.deployment.outputs.page_url }}"}, "github-pages"):
-        errs.append("release.yml: the job deploy uses the environment github-pages")
-    if (jobs["deploy"].get("concurrency") or {}).get("group") != "pages-site" or (jobs["deploy"].get("concurrency") or {}).get("cancel-in-progress") is not False:
-        errs.append("release.yml: the job deploy shares the concurrency group pages-site (no cancel) with the web site deployment of build.yml")
+    if "approve" not in _needs(jobs["draft"]):
+        errs.append("release.yml: nothing is put into a draft before the approval (draft needs approve)")
+    # publication: only through the script, only in the job behind approval 2
     for jname, job in jobs.items():
         for st in job.get("steps") or []:
             run = str(st.get("run", ""))
-            if re.search(r"gh\s+release|--draft=false", run):
+            if re.search(r"gh\s+release\s+(create|edit|upload|delete)|--draft=false", run):
                 errs.append(f"release.yml: job {jname}: no direct gh release command: the release is handled only by scripts/release_draft.sh")
             if "release_draft.sh publish" in run and jname != "publish":
                 errs.append(f"release.yml: job {jname}: only the job publish may publish")
@@ -462,28 +414,19 @@ def check_tag_release_workflow(doc):
         errs.append("release.yml: publish runs scripts/release_draft.sh publish and checks out without stored credentials")
     for need, jn, why in (
         ("merge-base --is-ancestor", "guard", "check that the tagged commit is part of main"), ("pin_actions.sh --check", "guard", "refuse unpinned actions"),
-        ("flatpak_channel.py plan", "guard", "check the live channel state (no downgrade, no re-publish)"), ("stable-repo.gpg", "guard", "require the committed public key"), ("flatpak_keys.sh check-pin", "guard", "check the committed public key against the fingerprint and subkey id pinned in project.conf"),
-        ("flatpak_keys.sh verify-repo packaging/flatpak/stable-repo.gpg", "verify-signed", "verify the signed repository with the committed public key"),
-        ("check_flatpak_delta_update.sh --require-delta", "verify-signed", "prove the update over the signed deltas"),
-        ("check_bundle_matches_repo.sh", "verify-signed", "prove that the bundle is the bundle of the signed repository"),
+        ("version.py compare", "guard", "refuse a version that is not newer than the newest published release"),
         ("check_release_set.py", "draft", "check the exact release set"), ("--with-windows", "draft", "include the Windows installer in the set"),
-        ("check_public_source.py", "draft", "audit the source archive"), ("scripts/release_draft.sh upload", "draft", "fill the draft and read it back"),
-        ("assemble_pages_site.py", "pages-build", "assemble web site, repository and install files in one folder"),
-        ("flatpak_keys.sh verify-repo packaging/flatpak/stable-repo.gpg", "pages-build", "verify the repository again before it is published"),
-        ("upload-pages-artifact", "pages-build", "upload the site"), ("deploy-pages", "deploy", "deploy the site"),
-        ("check_flatpak_live.sh", "verify-live", "check the live update source"),
+        ("check_public_source.py", "draft", "audit the source archive"), ("sha256sum -c SHA256SUMS-flatpak", "draft", "check the checksum of the bundle"), ("scripts/release_draft.sh upload", "draft", "fill the draft and read it back"),
     ):
         if need not in repr(jobs[jn]):
             errs.append(f"release.yml: job {jn} must {why} ({need!r} missing)")
-    if "--allow-loopback-http" in text:
-        errs.append("release.yml: the live check never allows http")
     return errs
 
 
-# The tests of the signing, the mirror of the live history, the static-delta update and the release script need these programs. A job that runs `build_flatpak.sh test` must install them BEFORE
-# the step and set TSW_REQUIRE_TOOLS=1 (a missing program is then a failure; without it the tests are skipped silently, which once let 38 of them pass without running).
-TEST_PACKAGES = ("flatpak", "ostree", "gnupg")
-E2E_PACKAGES = ("flatpak", "ostree", "gnupg", "curl")
+# The Flatpak tests and the release script tests need these programs. A job that runs `build_flatpak.sh test` must install them BEFORE the step and set TSW_REQUIRE_TOOLS=1
+# (a missing program is then a failure; without it the tests are skipped silently, which once let 38 of them pass without running).
+TEST_PACKAGES = ("flatpak",)
+E2E_PACKAGES = ("flatpak",)
 
 
 def _apt_packages(run_texts):
@@ -506,11 +449,11 @@ def _required_tool_rules(name, doc):
             before = _apt_packages(str(x.get("run", "")) for x in steps[:i])
             if re.search(r"scripts/build_flatpak\.sh\s+test\b", run):
                 if str((st.get("env") or {}).get("TSW_REQUIRE_TOOLS")) != "1":
-                    errs.append(f"{name}: job {jname}: the step that runs `build_flatpak.sh test` must set TSW_REQUIRE_TOOLS: \"1\" (without it the signing, mirror, delta and release tests are skipped silently when a program is missing)")
+                    errs.append(f"{name}: job {jname}: the step that runs `build_flatpak.sh test` must set TSW_REQUIRE_TOOLS: \"1\" (without it the Flatpak and release tests are skipped silently when a program is missing)")
                 gone = [p for p in TEST_PACKAGES if p not in before]
                 if gone:
                     errs.append(f"{name}: job {jname}: the tests need {', '.join(gone)}: install them with apt-get in an earlier step of the job")
-            if "scripts/e2e_flatpak_update.sh" in run:
+            if "scripts/e2e_flatpak_bundle.sh" in run:
                 gone = [p for p in E2E_PACKAGES if p not in before]
                 if gone:
                     errs.append(f"{name}: job {jname}: the end-to-end test needs {', '.join(gone)}: install them with apt-get in an earlier step of the job")
@@ -523,7 +466,7 @@ def check_ci_policy(workflows, manifest):
     import yaml  # noqa: F401  (imported by the caller; kept here to fail loudly when missing)
     errs = []
     names = set(workflows)
-    for need in ("ci.yml", "flatpak.yml", "flatpak-stable-build.yml", "release-dry-run.yml", "rc-artifacts.yml", "windows.yml", "release-set.yml", "release.yml", "build.yml"):
+    for need in ("ci.yml", "flatpak.yml", "flatpak-stable-build.yml", "rc-artifacts.yml", "windows.yml", "release-set.yml", "release.yml", "build.yml"):
         if need not in names:
             errs.append(f"missing workflow {need}")
     for name, doc in sorted(workflows.items()):
@@ -571,8 +514,10 @@ def check_ci_policy(workflows, manifest):
             continue
         # a development cache is never used by a workflow that builds a release or a release candidate; windows.yml (also called by the release workflows) may restore one only
         # when it was started directly or by ci.yml, never from release-set.yml or release.yml (`github.workflow` names the CALLER's workflow)
-        if name in ("rc-artifacts.yml", "release-set.yml", "release.yml", "flatpak-stable-build.yml", "release-dry-run.yml") and "actions/cache" in text:
+        if name in ("rc-artifacts.yml", "release-set.yml", "release.yml", "flatpak-stable-build.yml") and "actions/cache" in text:
             errs.append(f"{name}: a release build must not use a cache (clean, independent builds)")
+        if "TSW_RELEASE_BUILD" in text and name != "flatpak-stable-build.yml":
+            errs.append(f"{name}: only flatpak-stable-build.yml makes a release build (TSW_RELEASE_BUILD); development and candidate builds must not")
         if name == "windows.yml":
             # the cache is opt-in: an input that defaults to false, set to true only by ci.yml and given explicitly as false by the release workflows (checked below)
             call_inputs = ((trig.get("workflow_call") or {}).get("inputs") or {})
@@ -620,31 +565,40 @@ def check_ci_policy(workflows, manifest):
                         errs.append(f"{name}: job {jname}: the checkout needs fetch-depth: 0 for the main check")
         if name == "flatpak-stable-build.yml":
             if list(trig) != ["workflow_call"]:
-                errs.append("flatpak-stable-build.yml: it is only called (workflow_call) by release.yml and release-dry-run.yml, never started by a push, a tag or by hand")
-            if "secrets." in text or "vars." in text or "write" in repr(doc.get("permissions")) or "environment" in text.replace("'environment'", "", 0) and "'environment':" in text:
-                errs.append("flatpak-stable-build.yml: no secret, no variable, no environment, no write permission: the code that is compiled here never meets the key")
-            if re.search(r"gpg\s+--(batch\s+--)?import|--gpg-sign|flatpak_sign_ci|secret-keys?|gh\s+release|deploy-pages", text):
-                errs.append("flatpak-stable-build.yml: it builds the UNSIGNED repository only; it neither signs nor publishes")
+                errs.append("flatpak-stable-build.yml: it is only called (workflow_call) by build.yml, never started by a push, a tag or by hand")
+            if "secrets." in text or "vars." in text or "write" in repr(doc.get("permissions")) or "'environment':" in text:
+                errs.append("flatpak-stable-build.yml: no secret, no variable, no environment, no write permission")
+            if re.search(r"gpg\s+--(batch\s+--)?import|--gpg-sign|--gpg-keys|--repo-url|flatpak_sign|flatpak_keys|secret-keys?|gh\s+release|deploy-pages|upload-pages-artifact", text):
+                errs.append("flatpak-stable-build.yml: it builds the plain bundle (no key, no update source) and neither signs nor publishes")
             for jname, job in (doc.get("jobs") or {}).items():
                 if "write" in repr(job.get("permissions")):
                     errs.append(f"flatpak-stable-build.yml: job {jname} must not have write permissions")
+            # the bundle keeps the branch of the earlier bundles (`local`) so that an installed version is updated in place; a RELEASE is told from a developer build by build metadata
+            if re.search(r"FLATPAK_BRANCH['\"]?\s*[:=]\s*['\"]?(stable|testing)|//stable|x86_64/stable|stable/active", text):
+                errs.append("flatpak-stable-build.yml: the release bundle is the branch local (no FLATPAK_BRANCH stable or testing, no //stable): an earlier installation must be updated in place, not get a parallel branch")
+            for step_name, needle in (("build", "build_flatpak.sh build"), ("bundle", "build_flatpak.sh bundle")):
+                hits = [st for j in (doc.get("jobs") or {}).values() for st in j.get("steps") or [] if needle in str(st.get("run", ""))]
+                if not hits or any(str((st.get("env") or {}).get("TSW_RELEASE_BUILD")) != "1" for st in hits):
+                    errs.append(f"flatpak-stable-build.yml: the {step_name} step must set TSW_RELEASE_BUILD: \"1\" (the release build metadata)")
+            if "tsw-forever-release-build" not in text or "//local" not in text:
+                errs.append("flatpak-stable-build.yml: the audit must check the release build marker in both programs and use the branch local")
         elif name == "build.yml":
             # BUILD ON PUSH: candidate artifacts and the web site; nothing that publishes a release or activates a Flatpak update, no key
             if sorted(trig) != ["push", "workflow_dispatch"] or (trig.get("workflow_dispatch") or {}).get("inputs"):
                 errs.append("build.yml: the triggers are push to main and a manual start without inputs")
             if "secrets." in text or "vars." in text or "flatpak-release" in text or "release-publish" in text:
-                errs.append("build.yml: no secret, no variable and no signing environment: the build of the candidate never meets the key")
+                errs.append("build.yml: no secret, no variable and no release environment: the build of the candidate never meets an approval or a secret")
             if re.search(r"gpg\s+--(batch\s+--)?import|--gpg-sign|flatpak_sign_ci|secret-keys?|gh\s+release|release_draft|git\s+(push|tag|commit)", text):
                 errs.append("build.yml: it signs nothing, creates no release, no tag and no commit")
             jobs = doc.get("jobs") or {}
             if sorted(jobs) != ["candidate", "flatpak", "site", "windows"]:
                 errs.append(f"build.yml: the jobs are exactly candidate, flatpak, site, windows (found {sorted(jobs)})")
             else:
-                if jobs["flatpak"].get("uses") != "./.github/workflows/flatpak-stable-build.yml" or (jobs["flatpak"].get("with") or {}).get("dry_run") is not False:
-                    errs.append("build.yml: the flatpak job calls flatpak-stable-build.yml with dry_run: false")
+                if jobs["flatpak"].get("uses") != "./.github/workflows/flatpak-stable-build.yml":
+                    errs.append("build.yml: the flatpak job calls flatpak-stable-build.yml")
                 site = jobs["site"]
-                if "candidate" not in _needs(site):
-                    errs.append("build.yml: the site is deployed only after the candidate is complete (needs candidate)")
+                if _needs(site):
+                    errs.append("build.yml: the web site does not wait for the builds (it is independent of any release)")
                 if _perms(site) != {"contents": "read", "pages": "write", "id-token": "write"}:
                     errs.append(f"build.yml: job site has exactly contents: read, pages: write, id-token: write (found {_perms(site)})")
                 if (site.get("concurrency") or {}).get("group") != "pages-site" or (site.get("concurrency") or {}).get("cancel-in-progress") is not False:
@@ -652,10 +606,12 @@ def check_ci_policy(workflows, manifest):
                 if "github.event_name == 'push'" not in str(site.get("if", "")):
                     errs.append("build.yml: the site is deployed for a push to main only")
                 stext = repr(site)
-                for need, why in (("preserve_live_site.py", "carry the published Flatpak data over from the live site"), ("flatpak_keys.sh verify-repo", "verify the carried-over repository with the public key"),
-                                  ("--website-only", "deploy the web site alone while no release exists"), ("git ls-remote", "deploy only the tip of main"), ("deploy-pages", "deploy")):
+                for need, why in (("assemble_pages_site.py --website website", "assemble the static web site only"), ("test_website.py", "test the web site before it goes live"),
+                                  ("git ls-remote", "deploy only the tip of main"), ("deploy-pages", "deploy")):
                     if need not in stext:
                         errs.append(f"build.yml: job site must {why} ({need!r} missing)")
+                if re.search(r"--repo\b|--refs\b|preserve_live|channels\.json|flatpakref|flatpakrepo|\.flatpak\b|build/flatpak|/repo\b|OSTree|ostree", stext):
+                    errs.append("build.yml: GitHub Pages carries the static web site only: no repository, no install file, no release file")
                 for jn in ("flatpak", "windows", "candidate"):
                     if any(v == "write" for v in _perms(jobs[jn]).values()):
                         errs.append(f"build.yml: job {jn} must not have write permissions")
@@ -666,16 +622,6 @@ def check_ci_policy(workflows, manifest):
                 for need in ("release_candidate.py create", "'retention-days': 30"):
                     if need not in cand:
                         errs.append(f"build.yml: job candidate must write the manifest and keep it 30 days ({need!r} missing)")
-        elif name == "release-dry-run.yml":
-            if list(trig) != ["workflow_dispatch"] or (trig.get("workflow_dispatch") or {}).get("inputs"):
-                errs.append("release-dry-run.yml: manual start (workflow_dispatch) without inputs only")
-            if "secrets." in text or "vars." in text or "'environment':" in text or "write" in repr(doc.get("permissions")):
-                errs.append("release-dry-run.yml: the rehearsal uses no secret, no variable, no environment and no write permission (its key is a throw-away key made inside the job)")
-            if re.search(r"gh\s+release|deploy-pages|upload-pages-artifact|git\s+(push|tag|commit)", text):
-                errs.append("release-dry-run.yml: the rehearsal publishes, deploys and tags nothing")
-            for jname, job in (doc.get("jobs") or {}).items():
-                if "write" in repr(job.get("permissions")):
-                    errs.append(f"release-dry-run.yml: job {jname} must not have write permissions")
         elif name == "flatpak.yml":
             if "pages" in repr(doc.get("permissions")) or "secrets." in text:
                 errs.append("flatpak.yml: the build workflow has no publishing rights and no secrets")

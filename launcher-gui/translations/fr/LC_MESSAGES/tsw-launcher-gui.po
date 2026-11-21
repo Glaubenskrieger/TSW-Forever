@@ -654,9 +654,6 @@ msgstr "J’ai vérifié ce fichier d’installation ; autoriser précisément 
 msgid "Installer copied. Its SHA-256 is {0}. It is not trusted until you confirm exactly this fingerprint."
 msgstr "Installateur copié. Son SHA-256 est {0}. Il n’est pas approuvé tant que vous n’avez pas confirmé précisément cette empreinte."
 
-msgid "A launcher update is available. Install it with your system's software center, or run: flatpak update {0}. Then restart the launcher."
-msgstr "Une mise à jour du launcher est disponible. Installez-la avec le centre de logiciels de votre système ou exécutez : flatpak update {0}. Puis redémarrez le launcher."
-
 msgid "The file dialog is not available: {0}. Type the path of the installer instead."
 msgstr "La boîte de dialogue de fichiers n’est pas disponible : {0}. Saisissez plutôt le chemin de l’installateur."
 
@@ -951,44 +948,14 @@ msgstr "L’installation ignorée est de nouveau visible pour le launcher."
 msgid "A new version of the launcher is available."
 msgstr "Une nouvelle version du launcher est disponible."
 
-msgid "Close launcher"
-msgstr "Fermer le launcher"
-
-msgid "Flatpak found nothing to install. The update source may be unreachable, or the update was not allowed."
-msgstr "Flatpak n’a rien trouvé à installer. La source de mises à jour est peut-être injoignable, ou la mise à jour n’a pas été autorisée."
-
-msgid "Flatpak installs it in the background. Your settings and the game stay as they are. Your system may ask you once to allow the update."
-msgstr "Flatpak l’installe en arrière-plan. Vos paramètres et le jeu restent inchangés. Votre système peut vous demander une fois d’autoriser la mise à jour."
-
-msgid "Installing the launcher update … {0} %"
-msgstr "Installation de la mise à jour du launcher … {0} %"
-
 msgid "Later"
 msgstr "Plus tard"
-
-msgid "The launcher update is installed. Close the launcher and start it again to use the new version."
-msgstr "La mise à jour du launcher est installée. Fermez le launcher et relancez-le pour utiliser la nouvelle version."
-
-msgid "The update could not be installed: {0}"
-msgstr "La mise à jour n’a pas pu être installée : {0}"
-
-msgid "The update source could not be reached. The launcher works as before; try again later."
-msgstr "La source de mises à jour est injoignable. Le launcher fonctionne comme avant ; réessayez plus tard."
-
-msgid "The update was not allowed. Allow it when your system asks, or update another way."
-msgstr "La mise à jour n’a pas été autorisée. Autorisez-la lorsque votre système le demande, ou mettez à jour autrement."
-
-msgid "This is a system-wide installation, so updating may ask for your administrator password. Use your software center or run: flatpak update {0}"
-msgstr "Il s’agit d’une installation à l’échelle du système ; la mise à jour peut donc demander votre mot de passe administrateur. Utilisez votre centre de logiciels ou exécutez : flatpak update {0}"
 
 msgid "Try again"
 msgstr "Réessayer"
 
 msgid "Update launcher"
 msgstr "Mettre à jour le launcher"
-
-msgid "You can also update with your software center, or run: flatpak update {0}"
-msgstr "Vous pouvez aussi mettre à jour avec votre centre de logiciels ou exécuter : flatpak update {0}"
 
 msgid "It is downloaded and checked first. Then Windows asks for your permission once, and the launcher starts again by itself. Your settings and the game stay as they are."
 msgstr "Elle est d’abord téléchargée et vérifiée. Ensuite, Windows demande votre autorisation une fois et le launcher redémarre de lui-même. Vos paramètres et le jeu restent inchangés."

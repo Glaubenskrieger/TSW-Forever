@@ -1,21 +1,16 @@
-# Builds the UNSIGNED stable Flatpak repository (OSTree, branch stable) and the deterministic source archive from the CHECKED-IN sources of one ref, runs the full test suite before
-# anything is built, and hands both over as workflow artifacts. Called by release.yml (the tagged release pipeline) and by release-dry-run.yml. It holds NO key, NO secret and
-# NO write permission, creates no release, tag or commit and publishes nothing. The repository is signed LATER, in a different job on a different machine (job `sign` of release.yml,
-# environment flatpak-release): the code that is compiled here (third-party crates, build scripts) never runs on a machine that holds the signing key.
-# Live history: unless dry_run, the live site (FLATPAK_REPO_URL in packaging/project.conf) is asked for channels.json: 404 = the first release (no history), 200 = the live stable branch
-# is mirrored (flatpak_mirror_live.sh verifies it against packaging/flatpak/stable-repo.gpg) so that users download only the difference; any other answer stops the build.
+# Builds the release Flatpak BUNDLE (branch local like every earlier bundle, so that an installed version is updated in place; one installable file, no hosted repository) and the deterministic source archive from the CHECKED-IN sources of one ref, runs the
+# full test suite before anything is built, installs the bundle once to audit it, and hands both over as workflow artifacts (with SHA-256 files). Called by build.yml (build on push). It holds NO
+# key, NO secret and NO write permission, creates no release, tag or commit and publishes nothing. The release tag later publishes exactly these files (release.yml, job candidate).
+# A RELEASE is told from a developer build by build metadata (TSW_RELEASE_BUILD=1 stages packaging/release-build, launcher/build.rs turns it into the release marker), not by the branch.
+# There is no OSTree repository to host and no signing: the bundle is the same kind of file that users have installed with `flatpak install --user <file>.flatpak` before; its integrity
+# is given by the SHA-256 file and by GitHub's release hosting.
 name: flatpak-stable-build
 on:
   workflow_call:
-    inputs:
-      dry_run:
-        description: "Rehearsal: no live history and no committed public key required (the dry run signs with a throw-away key)"
-        type: boolean
-        default: false
     outputs:
-      repo_artifact:
-        description: "Name of the artifact that holds the unsigned stable repository (repo.tar, commit.txt)"
-        value: ${{ jobs.build.outputs.repo_artifact }}
+      flatpak_artifact:
+        description: "Name of the artifact that holds the Flatpak bundle and its checksum"
+        value: ${{ jobs.build.outputs.flatpak_artifact }}
       source_artifact:
         description: "Name of the artifact that holds the source archive and its checksum"
         value: ${{ jobs.build.outputs.source_artifact }}
@@ -38,7 +33,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      repo_artifact: tsw-forever-${{ steps.version.outputs.version }}-unsigned-repo-${{ github.sha }}
+      flatpak_artifact: tsw-forever-${{ steps.version.outputs.version }}-flatpak-${{ github.sha }}
       source_artifact: tsw-forever-${{ steps.version.outputs.version }}-source-${{ github.sha }}
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -66,7 +61,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev libxi-dev ostree gnupg
+          sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder elfutils librsvg2-common rsync desktop-file-utils appstream python3 python3-yaml libarchive-tools jq libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev libxi-dev ostree
       - name: Allow the unprivileged user namespaces that flatpak-builder (bubblewrap) needs on Ubuntu 24.04 (setting of this runner VM only)
         run: |
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
@@ -85,7 +80,7 @@ jobs:
         run: scripts/build_flatpak.sh fetch --allow-network
       - name: Tests (launcher, GUI, patcher, packaging policy and the release scripts) - before any artifact is built
         env:
-          TSW_REQUIRE_TOOLS: "1"  # the signing, mirror, delta and release tests must run here (ostree and gnupg are installed above), never be skipped for a missing program
+          TSW_REQUIRE_TOOLS: "1"  # the Flatpak tests must run here (flatpak is installed above), never be skipped for a missing program
         run: |
           scripts/build_flatpak.sh test
           python3 -I scripts/test_check_release_artifacts.py
@@ -99,50 +94,46 @@ jobs:
           scripts/ci_disk_report.sh "4 after cleanup 1 (test builds removed)"
       - name: Vendor the crates of the committed Cargo.lock (network step 2 of 2)
         run: scripts/build_flatpak.sh vendor --allow-network
-      - name: The committed public signing key must exist (not in the dry run)
-        if: ${{ !inputs.dry_run }}
-        run: |
-          test -s packaging/flatpak/stable-repo.gpg || { echo "packaging/flatpak/stable-repo.gpg is missing: the public key of the project belongs in the repository before a release is built" >&2; exit 1; }
-          if gpg --list-packets packaging/flatpak/stable-repo.gpg 2>/dev/null | grep -q ':secret key packet'; then echo "stable-repo.gpg holds a SECRET key" >&2; exit 1; fi
-      - name: Ask the live site whether there is a history to take over (404 = first release; anything else but 200 stops the build)
-        if: ${{ !inputs.dry_run }}
-        id: live
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC1091
-          . packaging/project.conf
-          site="${FLATPAK_REPO_URL%/repo}"
-          code="$(curl --proto '=https' --proto-redir '=https' --max-redirs 3 -sS -o "$RUNNER_TEMP/channels.json" -w '%{http_code}' "$site/channels.json")"
-          case "$code" in
-            200) echo "live=$FLATPAK_REPO_URL" >> "$GITHUB_OUTPUT"; echo "live stable branch found: it is mirrored";;
-            404) echo "live=" >> "$GITHUB_OUTPUT"; echo "no live site yet: first release";;
-            *) echo "cannot read the live channel state (HTTP $code); refusing to build blind" >&2; exit 1;;
-          esac
-      - name: Build the UNSIGNED stable repository (offline from here on)
+      - name: Build the release Flatpak (branch local, release build metadata; offline from here on)
         env:
-          FLATPAK_BRANCH: stable
-          FLATPAK_LIVE_REPO_URL: ${{ steps.live.outputs.live }}
-        run: scripts/build_flatpak.sh stable-repo
-      - name: Pack the unsigned repository (deterministic) and record its commit
+          TSW_RELEASE_BUILD: "1"
+        run: scripts/build_flatpak.sh build
+      - name: Export the bundle (no update source, no key inside) and write its checksum
+        env:
+          TSW_RELEASE_BUILD: "1"
         run: |
           set -euo pipefail
+          scripts/build_flatpak.sh bundle
+          v="${{ steps.version.outputs.version }}"
+          mkdir -p build/flatpak-out
+          cp build/flatpak/tsw-launcher.flatpak "build/flatpak-out/tsw-forever-${v}.flatpak"
+          (cd build/flatpak-out && sha256sum "tsw-forever-${v}.flatpak" | tee SHA256SUMS-flatpak)
+      - name: Audit the bundle - install it for the user, check that it starts and reports this version, that it is the release build of the branch local and has no update source, and that no Microsoft or Funcom file, Windows program or game data is inside
+        run: |
+          set -euo pipefail
+          v="${{ steps.version.outputs.version }}"
           . packaging/project.conf
-          mkdir -p build/unsigned
-          commit="$(ostree rev-parse --repo=build/flatpak/repo "app/$APP_ID/x86_64/stable")"
-          echo "$commit" > build/unsigned/commit.txt
-          tar --sort=name --owner=0 --group=0 --numeric-owner -C build/flatpak/repo -cf build/unsigned/repo.tar .
-          echo "unsigned stable commit $commit"
-      - name: Upload the unsigned repository (no key anywhere; kept 7 days)
+          flatpak install --user --noninteractive "build/flatpak-out/tsw-forever-${v}.flatpak"
+          reported="$(flatpak run --command=tsw-launch "$APP_ID//local" --version)"
+          echo "$reported"
+          case "$reported" in *"$v"*) ;; *) echo "the installed Flatpak reports another version than $v" >&2; exit 1;; esac
+          flatpak info --user "$APP_ID//local" | grep -q 'Branch: *local' || { echo "the bundle is not the branch local" >&2; exit 1; }
+          files="$HOME/.local/share/flatpak/app/$APP_ID/x86_64/local/active/files"
+          for program in tsw-launch tsw-launcher; do grep -aq 'tsw-forever-release-build' "$files/bin/$program" || { echo "$program does not carry the release build marker" >&2; exit 1; }; done
+          if flatpak remotes --user --columns=url | grep -qi 'github.io'; then echo "the bundle configured an update source: there must be none" >&2; exit 1; fi
+          python3 -I scripts/check_release_artifacts.py "$files"
+          python3 -I scripts/check_licenses.py "$files/share/licenses/tsw-forever"
+      - name: Upload the Flatpak bundle (kept 30 days)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tsw-forever-${{ steps.version.outputs.version }}-unsigned-repo-${{ github.sha }}
-          path: build/unsigned/
+          name: tsw-forever-${{ steps.version.outputs.version }}-flatpak-${{ github.sha }}
+          path: build/flatpak-out/
           if-no-files-found: error
           retention-days: 30
-      - name: Free the disk space of the Flatpak build (the repository is packed; the Platform runtime is not needed any more)
+      - name: Free the disk space of the Flatpak build (the bundle is exported and audited; the Platform runtime is not needed any more)
         run: |
-          scripts/ci_disk_report.sh "5 after the Flatpak build, before cleanup 2"
-          rm -rf build/flatpak/state build/flatpak/build-dir build/flatpak/repo build/unsigned
+          scripts/ci_disk_report.sh "5 after the Flatpak build and bundle, before cleanup 2"
+          rm -rf build/flatpak/state build/flatpak/build-dir build/flatpak/repo build/flatpak-out
           flatpak uninstall --user --noninteractive "org.freedesktop.Sdk.Extension.rust-stable//${FREEDESKTOP_VERSION}" "org.freedesktop.Sdk//${FREEDESKTOP_VERSION}"
           scripts/ci_disk_report.sh "6 after cleanup 2 (Flatpak build state and SDK removed)"
       - name: Stage the deterministic source archive (built twice, both must have the same hash)
@@ -181,7 +172,7 @@ jobs:
           cp "build/native/tsw-forever-${v}-src.tar.gz" build/source-out/
           (cd build/source-out && sha256sum "tsw-forever-${v}-src.tar.gz" | tee SHA256SUMS-source)
           python3 -I scripts/check_public_source.py "build/source-out/tsw-forever-${v}-src.tar.gz"
-      - name: Upload the source archive (kept 7 days)
+      - name: Upload the source archive (kept 30 days)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tsw-forever-${{ steps.version.outputs.version }}-source-${{ github.sha }}

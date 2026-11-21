@@ -81,7 +81,8 @@ class WindowCatalogues(unittest.TestCase):
 
     def test_polish_special_characters_are_present_and_intact(self):
         text = read("launcher-gui", "translations", "pl", "LC_MESSAGES", "tsw-launcher-gui.po")
-        for ch in "ąćęłńóśźżĄĆĘŁÓŚŹ":
+        # "Ź" (capital, rare: it started only the removed text about the update source) is not required any more; the lower-case ź stays checked
+        for ch in "ąćęłńóśźżĄĆĘŁÓŚ":
             self.assertIn(ch, text, ch)
         self.assertNotIn("�", text)
         self.assertFalse(mojibake(text), "double-encoded characters")

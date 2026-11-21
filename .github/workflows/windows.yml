@@ -140,7 +140,7 @@ jobs:
           ls -la
           for f in "tsw-forever-$v-windows-setup.exe" SHA256SUMS-windows; do test -s "$f" || { echo "missing artifact: $f" >&2; exit 1; }; done
           sha256sum -c SHA256SUMS-windows
-          test "$(ls stage | wc -l)" = 4
+          test "$(find stage -mindepth 1 -maxdepth 1 | wc -l)" = 4
 
       - name: Upload the Windows artifacts (unsigned, internal tests only)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

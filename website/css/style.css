@@ -79,6 +79,8 @@ li { margin-bottom: 0.45rem; }
 .btn:hover { background: var(--btn-hover); border-color: var(--hover-border); color: var(--text); }
 .btn.primary { color: #fbf3ea; border-color: var(--accent-hot); background: linear-gradient(180deg, var(--accent) 0%, var(--accent-deep) 100%); box-shadow: 0 0 26px var(--shadow); }
 .dl .btn.primary { display: block; }
+.all-releases { font-size: 1rem; text-decoration: underline; text-underline-offset: 0.2em; }
+.btn[aria-disabled="true"], .btn.is-disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; pointer-events: none; }
 .btn.primary:hover { background: linear-gradient(180deg, var(--hover-hi) 0%, var(--hover-lo) 100%); border-color: var(--hover-border); color: #fbf3ea; }
 
 /* copyable shell commands: the command box and the quiet launcher-style button beside it */

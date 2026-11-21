@@ -55,37 +55,34 @@ Diagnostic logging is voluntary and off by default. Nothing is automatically upl
 
 Report bugs through the [public issue tracker](https://github.com/Glaubenskrieger/TSW-Forever/issues). Include launcher version, distribution, desktop/session, GPU/driver, installation method, exact steps and the visible error. Attach only a personally reviewed reduced diagnostic package. A security report should first use the privately designated contact, not a public issue containing secrets.
 
-## Updating the launcher (Flatpak)
+## Updating the launcher (Linux and Windows)
 
-A bundle from a release that carries the update source (branch `stable`) knows the project's signed Flatpak repository. The launcher then looks for a newer version in the background. When one exists, a notice appears on the main view: **Update launcher** asks Flatpak to install it, **Later** hides the notice until the next start. Flatpak downloads only what changed, verifies the signature and installs the new version next to the running one; your settings and the game folder stay as they are. When it is done, close the launcher and start it again to use the new version. Your system may ask you once whether the update is allowed (you can allow it permanently); a system-wide installation may ask for the administrator password, and the notice then also names the command `flatpak update org.tswlauncher.Launcher`, which you can always run yourself or use through your software center. Without an internet connection nothing is shown and the launcher works as before. If the update is refused or the source cannot be reached, the notice says so and offers to try again.
+From 0.4.1 on, no platform updates the launcher by itself. When a newer stable version has been published, a small notice appears at the bottom right of the window ("A new version of TSW-Forever (<version>) is available.") with the button **Open download page**. The button opens the download area of the official web site (https://glaubenskrieger.github.io/TSW-Forever/) for your system: the Linux area on Linux, the Windows area on Windows. The notice appears again at the next start until you have updated. The launcher downloads and installs nothing by itself, and without an internet connection no notice is shown. Only the released Flatpak asks; a launcher you built yourself (a developer build, also on the branch `local`), a native (non-Flatpak) run and testing builds show no notice. The question goes to the published GitHub releases (a draft or a pre-release is never offered); the web site is not needed for it.
 
-### Going back to the previous version (Flatpak)
+## Updating the launcher (Linux)
 
-If a new version causes trouble, you can install the previous one on purpose; only versions that carry the project's signature can be installed this way. Find the remote name with `flatpak remotes` and the commit of the previous version with `flatpak remote-info --log <remote> org.tswlauncher.Launcher//stable` (the second entry), then run `flatpak update --commit=<that commit> org.tswlauncher.Launcher` (add `--system` for a system-wide installation). The repository keeps only the previous version, and the next normal `flatpak update` (or the launcher's update notice) leads to the newest version again. Your settings and the game folder stay as they are. Please also report the problem.
+1. Download the newer `tsw-forever-<version>.flatpak` from the web site (or the release page) and check its SHA-256 against the value shown there or in `SHA256SUMS` (`sha256sum tsw-forever-<version>.flatpak`).
+2. Close the game and the launcher.
+3. Install the new bundle over the old one: `flatpak install --user ./tsw-forever-<version>.flatpak`. The application ID `org.tswlauncher.Launcher` and the user installation stay the same; your settings and the game folder are kept.
+4. Start the launcher from your application menu.
 
-### Moving an earlier installation (branch `local`) to the update source
+Install only a NEWER bundle. Flatpak refuses to install the same bundle again ("already installed") and installs an older bundle without a warning, which goes back to that version. That is also the way to go back on purpose if a new version causes trouble: install the older bundle of the release you want from the releases page. Please report the problem.
 
-Earlier single-file bundles (0.3.0 and older) have no update source, so they cannot update themselves. Move to the new one once; your settings and the game folder are kept because the application ID is the same:
+There is no update source: a bundle installs no remote with an address, so `flatpak update` and your software center find nothing to fetch for the launcher (they still update the Flatpak runtimes). A remote left behind by a pre-release test build is never asked any more and can be removed with `flatpak remote-delete --user <name>`.
 
-1. Download the newer bundle and `SHA256SUMS` from the release page and verify them (see above).
-2. Close the game and the launcher, then install the new bundle as before: `flatpak install --user ./tsw-forever-<version>.flatpak`. This also adds the project's repository as the update source and keeps the earlier installation next to it for now. (Use `--system` instead of `--user` only if your earlier installation is system-wide; keep the same kind.)
-3. Start the launcher from your application menu and check that it shows the version you expect. The new installation is the one the menu entry starts.
-4. Afterwards remove the old branch, keeping the data: `flatpak uninstall --user org.tswlauncher.Launcher//local` (do **not** use `--delete-data`). If you are unsure, skip this step; the old branch only uses disk space.
-5. From then on, updates arrive through the notice in the launcher or through `flatpak update`.
+### Earlier installations (0.3.0 and older)
 
-SteamOS: do this in Desktop Mode. The installation kind (user or system) is shown by `flatpak list --columns=application,branch,installation`; use the same kind as before. Testing packages are not part of this: they are handed out by hand and are separate applications.
+Nothing special is needed. The bundles of 0.4.1 use the same application ID (`org.tswlauncher.Launcher`), the same user installation and the same Flatpak branch (`local`) as the earlier single-file bundles, so `flatpak install --user ./tsw-forever-<version>.flatpak` updates an earlier installation in place: no second branch appears, and your settings and the game folder are kept (tested with the real Flatpak by `scripts/e2e_flatpak_bundle.sh`). The branch name `local` is historical; it does not mean "not released". Use `--system` instead of `--user` only if your earlier installation is system-wide; keep the same kind (`flatpak list --columns=application,branch,installation`). SteamOS: do this in Desktop Mode. Testing packages are not part of this: they are handed out by hand and are separate applications.
 
 ## Updating the launcher (Windows)
 
-There is no automatic update on Windows. When a newer stable version exists, a small notice appears at the bottom right of the window ("A new version of TSW-Forever (<version>) is available.") with the button **Open download page**, which opens the official release page in your browser. The notice appears again at the next start until you have updated. The launcher downloads and installs nothing by itself, and without an internet connection no notice is shown.
-
-To update: download `tsw-forever-<version>-windows-setup.exe` and `SHA256SUMS` from that release page, compare the SHA-256 of the installer with the line in `SHA256SUMS` (`Get-FileHash .\tsw-forever-<version>-windows-setup.exe` in PowerShell), close the launcher, and run the installer. Windows asks for permission once (the installer is administrator-only, UAC stays on). The new version replaces the old program files; your settings and the game stay as they are.
+The notice described above opens the Windows download area of the web site. To update: download `tsw-forever-<version>-windows-setup.exe` and `SHA256SUMS` from there (or from the release page), compare the SHA-256 of the installer with the line in `SHA256SUMS` (`Get-FileHash .\tsw-forever-<version>-windows-setup.exe` in PowerShell), close the launcher, and run the installer. Windows asks for permission once (the installer is administrator-only, UAC stays on). The new version replaces the old program files; your settings and the game stay as they are.
 
 The installer is not code-signed, because no signing certificate is used. Windows may therefore show **"Windows protected your PC"** (SmartScreen; choose *More info*, then *Run anyway* only after you checked the SHA-256) or name the publisher as unknown in the permission dialog. On a computer with *Smart App Control* switched on, Windows can refuse to start unsigned programs altogether; there is no way around that except switching that protection off, which is your own decision and which we do not ask you to make.
 
 ## Manual update
 
-For a bundle without an update source (an earlier single-file bundle, or one built locally), there is no automatic updater. Download the newer matching bundle/source/checksum set, verify it, close the game and launcher, then install the new bundle with the same `flatpak install --user ./tsw-forever-<version>.flatpak` command. Confirm the update prompt and restart. The app ID remains `org.tswlauncher.Launcher`. Settings and the external game folder should remain; migration from unrelated installation layouts still needs separate validation. `flatpak update` alone does not retrieve a release asset from GitHub; it needs the update source of a 0.4.0 or newer bundle.
+The launcher is updated by installing the newer file by hand, as described in the two sections above. All versions are listed on the [releases page](https://github.com/Glaubenskrieger/TSW-Forever/releases). `flatpak update` alone does not retrieve the launcher: no hosted update source exists.
 
 ## Uninstall
 

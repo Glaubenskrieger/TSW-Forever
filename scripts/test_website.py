@@ -34,7 +34,7 @@ SAME_AS_ENGLISH_OK = {
     "ui.faction", "dl.src.title", "nav.label", "faction.templars.name", "docs.readme", "docs.title", "legal.title", "ui.language", "nav.docs", "updates.title", "docs.changelog", "about.open.title",
 }
 # keys that only the scripts use (messages, the copy button states, the download note that js/download.js fills in)
-SCRIPT_KEYS = {"msg.storage", "ui.copied", "ui.copyfail", "dl.win.status.found", "dl.win.status.failed"}
+SCRIPT_KEYS = {"msg.storage", "ui.copied", "ui.copyfail", "dl.status.found", "dl.status.failed", "dl.status.none"}
 ALLOWED_LINKS = re.compile(r"^https://github\.com/Glaubenskrieger/TSW-Forever(/|#|$)")
 PLACEHOLDER = re.compile(r"\btodo\b(?! (lo|el|la))|\btbd\b|lorem|xxx|translate me|\?\?\?", re.I)
 
@@ -137,7 +137,7 @@ class NothingExternal(unittest.TestCase):
                     self.assertRegex(url, ALLOWED_LINKS, f"{n}: external address {url}")
                 self.assertNotRegex(text, r"//(cdn|fonts|ajax|unpkg)\.", n)
                 self.assertNotRegex(text, r"document\.cookie|XMLHttpRequest|navigator\.sendBeacon", n)
-                if n not in ("download.js", "source.js"):
+                if n != "download.js":
                     self.assertNotRegex(text, r"fetch\(", n)
         # script and stylesheet references are relative paths
         page = read("index.html")
@@ -163,7 +163,7 @@ class NothingExternal(unittest.TestCase):
     def test_the_folder_holds_only_publishable_files(self):
         top = set(os.listdir(SITE))
         self.assertTrue({"index.html", "css", "js", "assets"} <= top)
-        self.assertEqual(top & (pages.RESERVED | {"tsw-forever.flatpakrepo", "org.tswlauncher.Launcher.flatpakref"}), set())
+        pages.check_website(SITE)  # no installation file, no Flatpak repository or install file, no release file, no link, nothing but plain web content
         for name in top:
             self.assertFalse(name.lower().startswith(("readme", "serve", "start")), f"a helper file would be published: {name}")
 
@@ -196,25 +196,26 @@ class Downloads(unittest.TestCase):
         self.assertNotRegex(read("js", "config.js"), r"\b\d+\.\d+\.\d+\b")
         self.assertNotRegex(read("index.html"), r"windows-setup\.exe\"")
 
-    def test_the_fallback_button_is_the_release_page_of_the_project(self):
+    def test_the_fallback_button_is_the_release_list_of_the_project_and_the_archive_link_is_visible(self):
         page = read("index.html")
         cfg = conf()
-        links = re.findall(r'class="btn primary js-win-dl" href="([^"]+)"', page)
-        self.assertEqual(len(links), 2)
-        self.assertEqual(set(links), {cfg["REPO_URL"] + "/releases/latest"})
+        for platform in ("windows", "linux"):
+            links = re.findall(r'class="btn(?: primary)? js-dl-' + platform + r'" href="([^"]+)"', page)
+            self.assertEqual(len(links), 2, f"{platform}: one button in the hero and one in its download card")
+            self.assertEqual(set(links), {cfg["REPO_URL"] + "/releases"}, "without JavaScript a button opens the list of releases, never a file that might not exist")
+        self.assertRegex(page, r'<a class="all-releases" href="' + re.escape(cfg["REPO_URL"] + "/releases") + '"')
+        self.assertIn('id="download-linux"', page)
+        self.assertIn('id="download-windows"', page)  # the anchors the launcher opens
 
-    def test_the_flatpak_commands_come_from_the_project_configuration_and_are_not_translated(self):
+    def test_the_flatpak_commands_install_a_bundle_and_there_is_no_update_source_any_more(self):
         page = read("index.html")
         cfg = conf()
-        site = cfg["FLATPAK_REPO_URL"].rsplit("/repo", 1)[0]
-        with open(os.path.join(ROOT, "scripts", "gen_flatpak_refs.sh"), encoding="utf-8") as f:
-            remote = re.search(r"SuggestRemoteName=(\S+)", f.read()).group(1)
         commands = [html.unescape(c) for c in re.findall(r"<pre><code>(.*?)</code></pre>", page, re.S)]
-        self.assertIn(f"flatpak remote-add --user --if-not-exists {remote} {site}/tsw-forever.flatpakrepo", commands)
-        self.assertIn(f"flatpak install --user {remote} {cfg['APP_ID']}//stable", commands)
-        self.assertIn(f"flatpak run --user {cfg['APP_ID']}", commands)
-        self.assertIn(f'href="{cfg["APP_ID"]}.flatpakref"', page)
-        self.assertIn('href="tsw-forever.flatpakrepo"', page)
+        self.assertIn("flatpak install --user ./tsw-forever-*.flatpak", commands)
+        self.assertIn(f"flatpak run {cfg['APP_ID']}", commands)
+        self.assertIn("sha256sum tsw-forever-*.flatpak", commands)
+        for gone in ("flatpakref", "flatpakrepo", "remote-add", "repo/summary", "update-source", "data-update-source", "source.js"):
+            self.assertNotIn(gone, page, f"the page must not mention {gone}: no Flatpak repository is hosted")
         self.assertNotRegex(page, r"<pre[^>]*data-i18n")
         self.assertNotRegex(page, r"<code[^>]*data-i18n")
         for c in commands:
@@ -248,26 +249,23 @@ class Deployment(unittest.TestCase):
     def test_every_path_is_relative_so_the_github_pages_sub_path_and_the_local_preview_both_work(self):
         page = read("index.html")
         self.assertNotRegex(page, r"<base\b")
-        generated = {"tsw-forever.flatpakrepo", conf()["APP_ID"] + ".flatpakref"}  # created by the pages-build job of release.yml, next to index.html
         for ref in self.refs():
             if ref.startswith(("http://", "https://", "#", "mailto:")):
                 continue
             self.assertFalse(ref.startswith("/"), f"root-absolute path {ref}: it would leave the /TSW-Forever/ sub-path")
-            for base in ("http://localhost:8000/", conf()["FLATPAK_REPO_URL"].rsplit("/repo", 1)[0] + "/"):
+            for base in ("http://localhost:8000/", conf()["WEBSITE_URL"]):
                 url = urllib.parse.urljoin(base, ref)
                 self.assertTrue(url.startswith(base), f"{ref} leaves {base}")
-            if ref not in generated:
-                self.assertTrue(os.path.exists(os.path.join(SITE, ref.split("#")[0])), f"{ref} does not exist in website/")
+            self.assertTrue(os.path.exists(os.path.join(SITE, ref.split("#")[0])), f"{ref} does not exist in website/")
         for js in ("app.js", "download.js"):
             self.assertNotRegex(read("js", js), r"""(fetch\(|location[.a-z]*\s*=|\.src\s*=|setAttribute\("(href|src)",)\s*["']/""", f"{js}: a root-absolute path")
 
     def test_the_site_address_is_the_github_pages_address_of_the_public_repository(self):
         cfg = conf()
         site = f"https://{cfg['GITHUB_OWNER'].lower()}.github.io/{cfg['GITHUB_REPO']}"
-        self.assertEqual(cfg["FLATPAK_REPO_URL"], site + "/repo")  # the update source never changes its address
+        self.assertEqual(cfg["WEBSITE_URL"], site + "/")  # the address that the launcher opens never changes
         self.assertEqual(cfg["REPO_URL"], f"https://github.com/{cfg['GITHUB_OWNER']}/{cfg['GITHUB_REPO']}")
-        page = read("index.html")
-        self.assertIn(f"{site}/tsw-forever.flatpakrepo", page)
+        self.assertNotIn("flatpakrepo", read("index.html"))
 
     def test_every_github_link_points_at_the_public_repository_and_at_a_file_that_the_public_repository_will_have(self):
         sys.path.insert(0, HERE)
@@ -306,24 +304,19 @@ class DownloadLogic(unittest.TestCase):
             self.skipTest("no working JavaScript runtime")
         return runtime
 
-    def test_the_update_source_is_shown_only_when_its_files_really_exist(self):
-        r = subprocess.run([self.runtime(), os.path.join(HERE, "test_website_source.js")], capture_output=True, text=True, timeout=120)
-        self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-800:])
-        self.assertGreaterEqual(r.stdout.count('"ok":true'), 14)
-        self.assertNotIn('"ok":false', r.stdout)
+    def test_the_download_script_asks_only_github_for_the_release_metadata_and_names_no_version(self):
+        js, cfg = read("js", "download.js"), read("js", "config.js")
+        self.assertEqual(sorted(set(re.findall(r"https?://[^\"' ]+", js))), ["https://api.github.com/repos/", "https://github.com/"], "only GitHub's API and the release downloads of the repository")
+        self.assertIn("/releases/latest", js)  # GitHub's latest is never a draft or a pre-release
+        self.assertIn("draft", js)
+        self.assertIn("prerelease", js)
+        self.assertIn('credentials: "omit"', js)
+        self.assertIn('referrerPolicy: "no-referrer"', js)
+        self.assertNotRegex(js + cfg, r"\b\d+\.\d+\.\d+\b", "no version number is written into the scripts")
+        self.assertNotIn("updateSourceLive", cfg)
+        self.assertNotIn("sourceProbe", cfg)
+        self.assertFalse(os.path.exists(os.path.join(SITE, "js", "source.js")), "the probe of the former Flatpak update source is gone")
 
-    def test_the_source_script_asks_only_this_site_and_never_trusts_a_host_name(self):
-        js, cfg = read("js", "source.js"), read("js", "config.js")
-        self.assertNotIn("github.io", js)
-        self.assertNotRegex(js, r"https?://")
-        self.assertIn('method: "HEAD"', js)
-        self.assertIn('credentials: "same-origin"', js)
-        self.assertRegex(cfg, r'updateSourceLive: "auto"')
-        probe = re.search(r"sourceProbe: \[([^\]]*)\]", cfg).group(1).replace('"', "").replace(" ", "").split(",")
-        self.assertEqual(probe, ["repo/summary", "tsw-forever.flatpakrepo", conf()["APP_ID"] + ".flatpakref"])
-        for path in probe:
-            self.assertFalse(path.startswith(("/", "http")), path)
-        self.assertIn('<script src="js/source.js">', read("index.html"))
     def test_the_download_button_in_every_kind_of_github_answer(self):
         r = subprocess.run([self.runtime(), os.path.join(HERE, "test_website_download.js")], capture_output=True, text=True, timeout=120)
         self.assertEqual(r.returncode, 0, r.stdout[-1500:] + r.stderr[-800:])
@@ -370,7 +363,7 @@ class Editorial(unittest.TestCase):
     def test_the_placeholders_survive_in_every_language(self):
         for lang, d in self.d.items():
             for ph in ("{version}", "{size}"):
-                self.assertIn(ph, d["dl.win.status.found"], lang)
+                self.assertIn(ph, d["dl.status.found"], lang)
 
     def test_the_documentation_links_say_that_they_are_english(self):
         for lang in LANGUAGES[1:]:
@@ -388,10 +381,11 @@ class Editorial(unittest.TestCase):
         m = re.search(r"<noscript>(.*?)</noscript>", read("index.html"), re.S)
         self.assertEqual(re.findall(r'<p lang="([^"]+)">', m.group(1)), LANGUAGES)
 
-    def test_the_flatpakref_is_the_primary_graphical_way(self):
+    def test_both_downloads_are_primary_buttons_and_the_archive_link_stays_visible(self):
         page = read("index.html")
-        self.assertRegex(page, r'class="btn primary" href="' + re.escape(conf()["APP_ID"]) + r'\.flatpakref"')
-        self.assertRegex(page, r'class="btn" href="tsw-forever\.flatpakrepo"')
+        self.assertRegex(page, r'<a class="btn primary js-dl-linux"')
+        self.assertRegex(page, r'<a class="btn primary js-dl-windows"')
+        self.assertIn('class="all-releases"', page)
 
     def test_the_manual_update_command_has_no_placeholder(self):
         for c in re.findall(r"<pre><code>(.*?)</code></pre>", read("index.html"), re.S):
@@ -400,26 +394,15 @@ class Editorial(unittest.TestCase):
 
 
 class PagesAssembly(unittest.TestCase):
-    def test_the_pages_assembler_accepts_the_site_next_to_a_signed_repository_layout(self):
+    def test_the_pages_artifact_is_the_web_site_only_and_small(self):
         d = tempfile.mkdtemp(prefix="tsw-site-")
         try:
-            app = pages.APP_ID
-            commit = "a" * 64
-
-            def w(path, text):
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w") as f:
-                    f.write(text)
-
-            w(os.path.join(d, "repo", "summary"), "s")
-            w(os.path.join(d, "repo", "objects", "ab", "cd.file"), "o")
-            w(os.path.join(d, "repo", "refs", "heads", "app", app, "x86_64", "stable"), commit + "\n")
-            w(os.path.join(d, "refs", "tsw-forever.flatpakrepo"), "[Flatpak Repo]")
-            w(os.path.join(d, "refs", f"{app}.flatpakref"), "[Flatpak Ref]")
             out = os.path.join(d, "site")
-            self.assertGreater(pages.assemble(os.path.join(d, "repo"), os.path.join(d, "refs"), out, website=SITE), 0)
-            self.assertTrue(os.path.isfile(os.path.join(out, "index.html")) and os.path.isfile(os.path.join(out, "repo", "summary")))
-            self.assertTrue(os.path.isfile(os.path.join(out, "css", "themes.css")))
+            total = pages.assemble(SITE, out)
+            self.assertLess(total, 512 * 1024)
+            names = {os.path.relpath(os.path.join(dp, n), out) for dp, _, ns in os.walk(out) for n in ns}
+            self.assertIn("index.html", names)
+            self.assertFalse([n for n in names if n.endswith((".flatpak", ".flatpakref", ".flatpakrepo", ".exe", ".gz", ".gpg", ".filez")) or n.startswith(("repo", "channels", "site-manifest"))], names)
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

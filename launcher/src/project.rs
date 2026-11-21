@@ -19,6 +19,9 @@ fn channel_suffix() -> String {
     }
     #[cfg(not(channel_testing))]
     {
+        // a release build keeps its marker string in the finished program (the CI audit looks for it); the printed line stays the same
+        #[cfg(release_build)]
+        std::hint::black_box(crate::channel::RELEASE_MARKER);
         String::new()
     }
 }
@@ -32,21 +35,12 @@ pub fn manifest_format() -> u32 {
 
 pub const PROJECT_NAME: &str = "TSW-Forever";
 pub const REPO_URL: &str = "https://github.com/Glaubenskrieger/TSW-Forever";
-pub const FLATPAK_REPO_URL: &str = "https://glaubenskrieger.github.io/TSW-Forever/repo";
+/// The official web site: the one place for downloads (`#download-linux`, `#download-windows`). The launcher only opens it; it never downloads or installs anything itself.
+pub const WEBSITE_URL: &str = "https://glaubenskrieger.github.io/TSW-Forever/";
 pub const PATCH_BASE_URL: &str = "https://github.com/Glaubenskrieger/TSW-Forever/releases/latest/download/";
 pub const APP_ID: &str = "org.tswlauncher.Launcher";
 /// Base64 line of the minisign public key that signs patch manifests. Empty = patch system disabled.
 pub const PATCH_PUBLIC_KEY: &str = "";
-/// Flatpak ref of the launcher on the update source, for the given branch (channel: `stable` or `testing`).
-pub fn flatpak_ref_for(branch: &str) -> String {
-    format!("app/{APP_ID}/x86_64/{branch}")
-}
-
-/// The stable channel's ref (the default).
-pub fn flatpak_ref() -> String {
-    flatpak_ref_for("stable")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,7 +55,7 @@ mod tests {
         assert_eq!(conf("PATCH_MANIFEST_FORMAT"), tsw_patch::MANIFEST_FORMAT.to_string());
         assert_eq!(conf("PROJECT_NAME"), PROJECT_NAME);
         assert_eq!(conf("REPO_URL"), REPO_URL);
-        assert_eq!(conf("FLATPAK_REPO_URL"), FLATPAK_REPO_URL);
+        assert_eq!(conf("WEBSITE_URL"), WEBSITE_URL);
         assert_eq!(conf("PATCH_BASE_URL"), PATCH_BASE_URL);
         assert_eq!(conf("APP_ID"), APP_ID);
         assert_eq!(format!("https://github.com/{}/{}", conf("GITHUB_OWNER"), conf("GITHUB_REPO")), REPO_URL);
@@ -78,11 +72,10 @@ mod tests {
 
     #[test]
     fn update_sources_are_https_and_patch_urls_end_in_a_slash() {
-        for u in [REPO_URL, FLATPAK_REPO_URL, PATCH_BASE_URL] {
+        for u in [REPO_URL, WEBSITE_URL, PATCH_BASE_URL] {
             assert!(u.starts_with("https://"), "{u}");
         }
         assert!(PATCH_BASE_URL.ends_with('/') && PATCH_BASE_URL.starts_with(REPO_URL));
-        assert_eq!(flatpak_ref(), "app/org.tswlauncher.Launcher/x86_64/stable");
-        assert_eq!(flatpak_ref_for("testing"), "app/org.tswlauncher.Launcher/x86_64/testing");
+        assert!(WEBSITE_URL.ends_with('/'), "the download anchors are appended to it");
     }
 }

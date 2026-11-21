@@ -1,12 +1,11 @@
 # BUILD ON PUSH. Every push to main builds, tests and checks the complete release candidate of that commit, and updates the web site - and publishes NOTHING else:
-#   flatpak ...... unsigned stable OSTree repository + source archive (flatpak-stable-build.yml: full test suite first; no key, no secret)
+#   flatpak ...... Flatpak bundle (one installable file) + source archive (flatpak-stable-build.yml: full test suite first; no key, no secret)
 #   windows ...... Windows installer (windows.yml; no key, no secret)
 #   candidate .... collects those artifacts of THIS run, writes candidate.json (version, full commit id, SHA-256 of every file; scripts/release_candidate.py) and keeps them 30 days
-#   site ......... the web site goes live (GitHub Pages). The published Flatpak data of an earlier release is fetched from the live site, verified against its manifest and the
-#                  public key, and deployed again unchanged; before the first release there is none. Only the tip of main is deployed (no rollback by an older run).
-# It creates NO release, NO tag, NO commit, activates NO Flatpak update and signs NOTHING: the artifacts wait for the release tag, which publishes exactly these (release.yml,
-# job candidate). A manual start (workflow_dispatch) on main or on an existing v-tag rebuilds the artifacts of that commit (for example after the 30 days have passed); the site
-# is deployed from main only.
+#   site ......... the web site goes live (GitHub Pages). GitHub Pages holds the STATIC WEB SITE ONLY: no installation file, no Flatpak repository. It does not wait for the builds and
+#                  does not depend on a release; its download buttons ask GitHub for the newest PUBLISHED release at runtime. Only the tip of main is deployed (no rollback by an older run).
+# It creates NO release, NO tag, NO commit and signs NOTHING: the artifacts wait for the release tag, which publishes exactly these (release.yml, job candidate). A manual start
+# (workflow_dispatch) on main or on an existing v-tag rebuilds the artifacts of that commit (for example after the 30 days have passed); the site is deployed from main only.
 name: build
 
 on:
@@ -26,8 +25,6 @@ jobs:
   flatpak:
     if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
     uses: ./.github/workflows/flatpak-stable-build.yml
-    with:
-      dry_run: false
     permissions:
       contents: read
 
@@ -75,7 +72,7 @@ jobs:
           (cd "parts/tsw-forever-${VERSION}-source-${GITHUB_SHA}" && sha256sum -c SHA256SUMS-source)
           {
             echo "### Release candidate ${VERSION}"
-            echo "Commit \`${GITHUB_SHA}\` - Linux (unsigned stable repository) and Windows built and checked. Nothing is published: the tag v${VERSION} on exactly this commit publishes these artifacts."
+            echo "Commit \`${GITHUB_SHA}\` - Linux (Flatpak bundle) and Windows built and checked. Nothing is published: the tag v${VERSION} on exactly this commit publishes these artifacts."
             echo '```'
             cat candidate.json
             echo '```'
@@ -105,10 +102,9 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # The web site alone. GitHub Pages replaces the WHOLE site with every deployment, so the published Flatpak data (if any) is carried over unchanged.
-  # One job from reading the live state to the deployment, in the same concurrency group as the release deployment: the two never interleave.
+  # The web site alone (static files: nothing else is ever put on GitHub Pages). Independent of the builds above and of any release: the page asks GitHub for the newest published
+  # release when it opens. One job from the checks to the deployment, in the same concurrency group so that two deployments never interleave.
   site:
-    needs: candidate
     if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -133,30 +129,17 @@ jobs:
         run: |
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_SHA is not on main" >&2; exit 1; }
 
-      - name: Install tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ostree gnupg python3 curl
-
-      - name: Assemble the site (the web site, plus the published Flatpak data unchanged if a release exists)
+      - name: Test the web site (links, six languages, download logic) before it goes live
         run: |
           set -euo pipefail
-          # shellcheck disable=SC1091
-          . packaging/project.conf
-          site="${FLATPAK_REPO_URL%/repo}"
-          code="$(curl --proto '=https' --proto-redir '=https' --max-redirs 3 -sS -o "$RUNNER_TEMP/channels.json" -w '%{http_code}' "$site/channels.json?nocache=${GITHUB_RUN_ID}")"
-          case "$code" in
-            404)
-              echo "no Flatpak release is published yet: the site is the web site alone"
-              python3 -I scripts/assemble_pages_site.py --website-only --website website --out build/site;;
-            200)
-              echo "a Flatpak release is published: its data is carried over unchanged"
-              python3 -I scripts/preserve_live_site.py --site "$site" --out build/live
-              scripts/flatpak_keys.sh verify-repo packaging/flatpak/stable-repo.gpg build/live/repo
-              cmp "$RUNNER_TEMP/channels.json" build/live/channels.json
-              python3 -I scripts/assemble_pages_site.py --repo build/live/repo --refs build/live/refs --channels-json build/live/channels.json --website website --out build/site;;
-            *) echo "cannot read the live channel state (HTTP $code); the site is not changed" >&2; exit 1;;
-          esac
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends python3 nodejs
+          python3 -I -W ignore scripts/test_website.py
+          python3 -I scripts/test_assemble_pages_site.py
+          node scripts/test_website_download.js
+
+      - name: Assemble the site (the static web site only)
+        run: python3 -I scripts/assemble_pages_site.py --website website --out build/site
 
       - name: Only the tip of main is deployed (an older run never replaces a newer site; the newer run deploys)
         id: tip

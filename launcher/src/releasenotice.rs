@@ -9,7 +9,11 @@
 //! checked strictly: it must be exactly `<repo>/releases/tag/vMAJOR.MINOR.PATCH` (digits only: a tag with any suffix such as `-rc1` or `-testing` is ignored). The
 //! address that the button opens is NOT taken from the answer; it is built from the repository constant and the validated version.
 //!
-//! The answer is not signed, so it is treated as untrusted text that can at worst show a wrong notice with a link to our own release page.
+//! The answer is not signed, so it is treated as untrusted text that can at worst show a wrong notice with a link to our own web site.
+//!
+//! Linux and Windows behave the same (owner decision 2026-11-21, version 0.4.1): the launcher never installs a launcher update. The notice names the newer version and its
+//! button opens the download area of the official web site for the platform the launcher runs on (`<site>#download-linux` or `<site>#download-windows`). The question is
+//! asked of the published GitHub release metadata, not of the web site: a release that is still a draft, and anything the site publishes later, play no role.
 
 use crate::channel::Channel;
 use std::process::{Command, Stdio};
@@ -48,7 +52,34 @@ impl std::fmt::Display for Version {
     }
 }
 
-/// What the window shows: the newer version and the official page to open.
+/// The platform whose download area is opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Linux,
+    Windows,
+}
+
+impl Platform {
+    /// The platform this program was built for.
+    pub fn current() -> Platform {
+        if cfg!(windows) {
+            Platform::Windows
+        } else {
+            Platform::Linux
+        }
+    }
+}
+
+/// The download area of the official web site for a platform, built from the site constant (never copied from an answer).
+pub fn download_page(website: &str, platform: Platform) -> String {
+    let area = match platform {
+        Platform::Linux => "download-linux",
+        Platform::Windows => "download-windows",
+    };
+    format!("{website}#{area}")
+}
+
+/// What the window shows: the newer version and the official page to open (the download area of the web site for this platform).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
     pub version: String,
@@ -58,11 +89,6 @@ pub struct Notice {
 /// The address that is asked for the latest stable release.
 pub fn latest_url(repo_url: &str) -> String {
     format!("{repo_url}/releases/latest")
-}
-
-/// The official page of one release, built from the repository constant (never copied from an answer).
-pub fn release_page(repo_url: &str, version: Version) -> String {
-    format!("{repo_url}/releases/tag/v{version}")
 }
 
 /// The version a header block names as the latest release: the last status line must be a redirect and its `Location` exactly `<repo>/releases/tag/vX.Y.Z`.
@@ -93,8 +119,18 @@ pub trait HeadFetch {
     fn head(&self, url: &str) -> Result<String, String>;
 }
 
+/// Whether a Linux program may ask at all. It must be a RELEASE build (`release_build`: build metadata, see [`crate::channel::RELEASE_BUILD`]; the Flatpak branch is `local` for
+/// releases and for developer builds alike, so the branch name tells nothing) of the stable channel, and it must run in the Flatpak of this very build (application ID and
+/// branch fit, see [`crate::channel::check_flatpak_identity`]). A native run, a development build and an installation that does not fit this build ask nothing.
+/// `info` = the text of `/.flatpak-info`.
+pub fn linux_eligible(info: Option<&str>, build: Channel, expected_app_id: &str, release_build: bool) -> bool {
+    let Some(info) = info else { return false };
+    release_build && build == Channel::Stable && crate::channel::check_flatpak_identity(info, build, expected_app_id) == crate::channel::Identity::Consistent
+}
+
 /// The notice for a program of channel `build` and version `installed`, or `None` (also: offline, not stable, not newer, an answer that does not look right).
-pub fn check(fetch: &dyn HeadFetch, build: Channel, repo_url: &str, installed: &str) -> Option<Notice> {
+/// `page` is the address the notice opens (see [`download_page`]).
+pub fn check(fetch: &dyn HeadFetch, build: Channel, repo_url: &str, installed: &str, page: &str) -> Option<Notice> {
     // testing builds are private and never told about stable versions
     if build != Channel::Stable {
         return None;
@@ -102,7 +138,7 @@ pub fn check(fetch: &dyn HeadFetch, build: Channel, repo_url: &str, installed: &
     let installed = Version::parse(installed)?;
     let headers = fetch.head(&latest_url(repo_url)).ok()?;
     let latest = parse_latest(&headers, repo_url)?;
-    (latest > installed).then(|| Notice { version: latest.to_string(), url: release_page(repo_url, latest) })
+    (latest > installed).then(|| Notice { version: latest.to_string(), url: page.to_string() })
 }
 
 /// `curl` as the fetcher: https only, no redirect is followed, short timeouts, a hard output limit, no console window.
@@ -132,6 +168,8 @@ mod tests {
     use std::cell::RefCell;
 
     const REPO: &str = "https://github.com/Glaubenskrieger/TSW-Forever";
+    const SITE: &str = "https://glaubenskrieger.github.io/TSW-Forever/";
+    const PAGE: &str = "https://glaubenskrieger.github.io/TSW-Forever/#download-linux";
 
     fn redirect(to: &str) -> String {
         format!("HTTP/2 302 \r\ncontent-type: text/html\r\nlocation: {to}\r\nserver: github.com\r\n\r\n")
@@ -151,7 +189,7 @@ mod tests {
     }
 
     fn notice(headers: &str, build: Channel, installed: &str) -> Option<Notice> {
-        check(&Fake::answer(headers), build, REPO, installed)
+        check(&Fake::answer(headers), build, REPO, installed, PAGE)
     }
 
     #[test]
@@ -167,7 +205,7 @@ mod tests {
     #[test]
     fn a_newer_stable_release_gives_a_notice_with_the_official_page() {
         let n = notice(&redirect(&format!("{REPO}/releases/tag/v0.4.0")), Channel::Stable, "0.3.1").expect("newer");
-        assert_eq!(n, Notice { version: "0.4.0".into(), url: format!("{REPO}/releases/tag/v0.4.0") });
+        assert_eq!(n, Notice { version: "0.4.0".into(), url: PAGE.into() });
     }
 
     #[test]
@@ -201,12 +239,35 @@ mod tests {
     }
 
     #[test]
-    fn the_button_address_is_built_from_the_validated_version_not_copied() {
-        // the validated version is the only thing taken from the answer; the address is built from the constant
+    fn the_button_address_is_built_from_the_site_constant_and_never_copied_from_the_answer() {
+        // the validated version is the only thing taken from the answer; the address is the download area of the web site
         let n = notice(&redirect(&format!("{REPO}/releases/tag/v1.2.3")), Channel::Stable, "0.3.1").unwrap();
-        assert_eq!(n.url, release_page(REPO, Version(1, 2, 3)));
-        assert!(n.url.starts_with(&format!("{REPO}/releases/tag/v")));
-        assert!(n.url.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '/' | '.' | '-')));
+        assert_eq!(n.version, "1.2.3");
+        assert_eq!(n.url, PAGE);
+        assert_eq!(download_page(SITE, Platform::Linux), "https://glaubenskrieger.github.io/TSW-Forever/#download-linux");
+        assert_eq!(download_page(SITE, Platform::Windows), "https://glaubenskrieger.github.io/TSW-Forever/#download-windows");
+        assert!(n.url.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '/' | '.' | '-' | '#')));
+    }
+
+    #[test]
+    fn on_linux_only_a_release_build_in_the_flatpak_of_this_build_asks() {
+        let id = "org.example.App";
+        let info = |app: &str, branch: &str| format!("[Application]\nname={app}\n\n[Instance]\nbranch={branch}\n");
+        // releases are built on the branch `local`, like every developer build: the build metadata decides, not the branch
+        assert!(linux_eligible(Some(&info(id, "local")), Channel::Stable, id, true), "the release bundle (branch local) asks");
+        assert!(!linux_eligible(Some(&info(id, "local")), Channel::Stable, id, false), "a developer build (also branch local) never asks");
+        assert!(linux_eligible(Some(&info(id, "stable")), Channel::Stable, id, true), "a release build on the branch the identity check accepts");
+        assert!(!linux_eligible(None, Channel::Stable, id, true), "not a Flatpak (a native run)");
+        assert!(!linux_eligible(Some(&info(id, "testing")), Channel::Stable, id, true), "a branch that does not fit this build");
+        assert!(!linux_eligible(Some(&info("org.example.Other", "local")), Channel::Stable, id, true), "another application");
+        assert!(!linux_eligible(Some(&info(id, "local")), Channel::Testing, id, true), "a testing build is never told about stable versions");
+    }
+
+    #[test]
+    fn linux_and_windows_open_their_own_download_area_and_this_build_knows_its_platform() {
+        assert_ne!(download_page(SITE, Platform::Linux), download_page(SITE, Platform::Windows));
+        assert_eq!(Platform::current(), if cfg!(windows) { Platform::Windows } else { Platform::Linux });
+        assert!(download_page(crate::project::WEBSITE_URL, Platform::current()).starts_with("https://"));
     }
 
     #[test]
@@ -237,21 +298,21 @@ mod tests {
     #[test]
     fn a_testing_build_is_never_told_about_stable_versions_and_asks_nothing() {
         let f = Fake::answer(&redirect(&format!("{REPO}/releases/tag/v9.9.9")));
-        assert_eq!(check(&f, Channel::Testing, REPO, "0.3.1"), None);
+        assert_eq!(check(&f, Channel::Testing, REPO, "0.3.1", PAGE), None);
         assert!(f.1.borrow().is_empty(), "no request is made at all");
     }
 
     #[test]
     fn offline_and_errors_end_silently() {
         let f = Fake(Err("could not resolve host".into()), RefCell::new(vec![]));
-        assert_eq!(check(&f, Channel::Stable, REPO, "0.3.1"), None);
-        assert_eq!(check(&Fake::answer(&redirect(&format!("{REPO}/releases/tag/v0.4.0"))), Channel::Stable, REPO, "not-a-version"), None, "an unreadable installed version offers nothing");
+        assert_eq!(check(&f, Channel::Stable, REPO, "0.3.1", PAGE), None);
+        assert_eq!(check(&Fake::answer(&redirect(&format!("{REPO}/releases/tag/v0.4.0"))), Channel::Stable, REPO, "not-a-version", PAGE), None, "an unreadable installed version offers nothing");
     }
 
     #[test]
     fn the_question_goes_to_the_latest_release_of_the_repository_only() {
         let f = Fake::answer(&redirect(&format!("{REPO}/releases/tag/v0.4.0")));
-        check(&f, Channel::Stable, REPO, "0.3.1");
+        check(&f, Channel::Stable, REPO, "0.3.1", PAGE);
         assert_eq!(*f.1.borrow(), [format!("{REPO}/releases/latest")]);
     }
 
@@ -273,12 +334,13 @@ mod tests {
         println!("latest stable release: {latest}");
         // an installed version that is older shows a notice for exactly that release, an equal or newer one shows none
         let older = Version(0, 0, 0).to_string();
-        assert_eq!(check(&curl, Channel::Stable, REPO, &older).map(|n| n.url), Some(release_page(REPO, latest)));
-        assert_eq!(check(&curl, Channel::Stable, REPO, &latest.to_string()), None);
+        assert_eq!(check(&curl, Channel::Stable, REPO, &older, PAGE).map(|n| n.version), Some(latest.to_string()));
+        assert_eq!(check(&curl, Channel::Stable, REPO, &latest.to_string(), PAGE), None);
     }
 
     #[test]
     fn the_repository_constant_is_the_official_one() {
         assert_eq!(crate::project::REPO_URL, REPO);
+        assert_eq!(crate::project::WEBSITE_URL, SITE);
     }
 }

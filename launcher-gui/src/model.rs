@@ -17,8 +17,8 @@ use tsw_launch::runner::Runner;
 use crate::i18n::Msg;
 use crate::messages;
 
-/// What the launcher-update block of the main view shows. `state`: 0 = hidden, 1 = available, 2 = installing, 3 = installed (restart), 4 = nothing to
-/// install, 5 = failed (the numbers are those of the window's `update-state`).
+/// What the launcher-update block of the main view shows. `state`: 0 = hidden, 6 = a newer version exists (the notice, Linux and Windows); 1 to 5 exist only in the
+/// development feature `windows-self-update` (available, installing, installed, nothing to install, failed). The numbers are those of the window's `update-state`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateBanner {
     pub state: i32,
@@ -29,67 +29,8 @@ pub struct UpdateBanner {
     pub secondary: Option<Msg>,
 }
 
-/// The update block for a phase of the Flatpak update (pure; `None` = nothing to show). `scope` only changes the hint of a refusal; `dismissed` hides the
-/// block until the next start (never the "restart" reminder, which tells the user that a new version is waiting).
-pub fn update_banner(phase: &tsw_launch::update::flatpak::Phase, scope: Option<tsw_launch::update::flatpak::Scope>, dismissed: bool) -> Option<UpdateBanner> {
-    use tsw_launch::update::flatpak::{Failure, Phase, Scope};
-    let app = || tsw_launch::project::APP_ID.to_string();
-    let command_hint = |system_note: bool| {
-        if system_note && scope == Some(Scope::System) {
-            Msg::new("This is a system-wide installation, so updating may ask for your administrator password. Use your software center or run: flatpak update {0}", [app()])
-        } else {
-            Msg::new("You can also update with your software center, or run: flatpak update {0}", [app()])
-        }
-    };
-    match phase {
-        Phase::Idle => None,
-        _ if dismissed && !matches!(phase, Phase::RestartNeeded | Phase::Working(_)) => None,
-        Phase::Available => Some(UpdateBanner {
-            state: 1,
-            text: Msg::plain("A new version of the launcher is available."),
-            detail: Some(Msg::plain("Flatpak installs it in the background. Your settings and the game stay as they are. Your system may ask you once to allow the update.")),
-            button: Msg::plain("Update launcher"),
-            secondary: None,
-        }),
-        Phase::Working(p) => {
-            Some(UpdateBanner { state: 2, text: Msg::new("Installing the launcher update … {0} %", [p.to_string()]), detail: None, button: Msg::plain("Update launcher"), secondary: None })
-        }
-        Phase::RestartNeeded => Some(UpdateBanner {
-            state: 3,
-            text: Msg::plain("The launcher update is installed. Close the launcher and start it again to use the new version."),
-            detail: None,
-            button: Msg::plain("Close launcher"),
-            secondary: None,
-        }),
-        Phase::NothingToInstall => Some(UpdateBanner {
-            state: 4,
-            text: Msg::plain("Flatpak found nothing to install. The update source may be unreachable, or the update was not allowed."),
-            detail: Some(command_hint(true)),
-            button: Msg::plain("Try again"),
-            secondary: None,
-        }),
-        Phase::Failed(Failure::NotAllowed) => Some(UpdateBanner {
-            state: 5,
-            text: Msg::plain("The update was not allowed. Allow it when your system asks, or update another way."),
-            detail: Some(command_hint(true)),
-            button: Msg::plain("Try again"),
-            secondary: None,
-        }),
-        Phase::Failed(Failure::Network) => Some(UpdateBanner {
-            state: 5,
-            text: Msg::plain("The update source could not be reached. The launcher works as before; try again later."),
-            detail: None,
-            button: Msg::plain("Try again"),
-            secondary: None,
-        }),
-        Phase::Failed(Failure::Other(why)) => {
-            Some(UpdateBanner { state: 5, text: Msg::new("The update could not be installed: {0}", [why.clone()]), detail: Some(command_hint(true)), button: Msg::plain("Try again"), secondary: None })
-        }
-    }
-}
-
-/// The notice that a newer stable version exists (Windows; state 6 of the window's `update-state`). It is no update: the button opens the official release page and the user
-/// installs the new installer by hand. There is no "Later" button: the notice shows again at the next start.
+/// The notice that a newer stable version exists (Linux and Windows; state 6 of the window's `update-state`). It is no update: the button opens the download area of the web site
+/// for this platform and the user installs the new version by hand. There is no "Later" button: the notice shows again at the next start.
 pub fn release_notice_banner(notice: Option<&tsw_launch::releasenotice::Notice>) -> Option<UpdateBanner> {
     let notice = notice?;
     Some(UpdateBanner {
@@ -622,12 +563,11 @@ pub fn background_image(config_file: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use tsw_launch::update::flatpak::{Failure, Phase, Scope};
-
     #[test]
     fn the_release_notice_is_quiet_names_the_version_and_only_opens_the_release_page() {
         use super::release_notice_banner as banner;
-        let n = tsw_launch::releasenotice::Notice { version: "0.4.0".into(), url: format!("{}/releases/tag/v0.4.0", tsw_launch::project::REPO_URL) };
+        let n =
+            tsw_launch::releasenotice::Notice { version: "0.4.0".into(), url: tsw_launch::releasenotice::download_page(tsw_launch::project::WEBSITE_URL, tsw_launch::releasenotice::Platform::Linux) };
         assert_eq!(banner(None), None, "nothing newer: nothing is shown");
         let b = banner(Some(&n)).unwrap();
         assert_eq!((b.state, b.secondary.clone()), (6, None));
@@ -680,32 +620,6 @@ mod tests {
             let w = en.render(&banner(&W::Working(step.clone()), false, false).unwrap().text);
             assert!(w.contains("Allow the Windows dialog") && w.contains("starts again by itself"), "{step:?}: {w}");
         }
-    }
-
-    #[test]
-    fn the_update_block_follows_the_phase_and_never_hides_a_pending_restart() {
-        use super::update_banner as banner;
-        assert_eq!(banner(&Phase::Idle, None, false), None, "offline or unknown: nothing is shown");
-        assert_eq!(banner(&Phase::Available, Some(Scope::User), false).unwrap().state, 1);
-        assert_eq!(banner(&Phase::Working(40), None, false).unwrap().state, 2);
-        assert_eq!(banner(&Phase::RestartNeeded, None, false).unwrap().state, 3);
-        assert_eq!(banner(&Phase::NothingToInstall, None, false).unwrap().state, 4);
-        for f in [Failure::NotAllowed, Failure::Network, Failure::Other("x".into())] {
-            assert_eq!(banner(&Phase::Failed(f), None, false).unwrap().state, 5);
-        }
-        // "Later" hides an offer or an error until the next start, but not a running install and not the restart reminder
-        for p in [Phase::Available, Phase::NothingToInstall, Phase::Failed(Failure::Network)] {
-            assert_eq!(banner(&p, None, true), None, "{p:?}");
-        }
-        assert!(banner(&Phase::RestartNeeded, None, true).is_some() && banner(&Phase::Working(1), None, true).is_some());
-        // the percent is shown, and a system-wide installation says that a password may be asked
-        let w = banner(&Phase::Working(42), None, false).unwrap();
-        assert_eq!(w.text.args, vec![crate::i18n::Arg::Text("42".into())]);
-        let en = crate::i18n::Catalog::new("en");
-        let user = en.render(banner(&Phase::NothingToInstall, Some(Scope::User), false).unwrap().detail.as_ref().unwrap());
-        let sys = en.render(banner(&Phase::NothingToInstall, Some(Scope::System), false).unwrap().detail.as_ref().unwrap());
-        assert!(user.contains("flatpak update org.tswlauncher.Launcher") && !user.contains("password"), "{user}");
-        assert!(sys.contains("administrator password") && sys.contains("flatpak update org.tswlauncher.Launcher"), "{sys}");
     }
 
     #[test]

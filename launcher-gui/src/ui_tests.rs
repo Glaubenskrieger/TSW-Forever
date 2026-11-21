@@ -1222,53 +1222,10 @@ fn with_the_detection_paused_an_old_stored_path_is_not_taken_and_a_manual_choice
 }
 
 #[test]
-fn the_launcher_update_block_shows_the_phase_and_the_buttons_follow_the_users_decision() {
-    use tsw_launch::update::flatpak::{Failure, Phase};
-    let (ui, state, mc, _p) = wired("update");
-    assert_eq!(ui.get_update_state(), 0, "nothing is shown by default (offline, no portal, no update source)");
-    let show = |p: Phase| {
-        let mut st = state.lock().unwrap();
-        st.update.phase = p;
-        st.update.dismissed = false; // a new situation is shown again
-        crate::render(&ui, &st);
-    };
-    show(Phase::Available);
-    assert_eq!((ui.get_update_state(), ui.get_update_button().as_str()), (1, "Update launcher"));
-    assert!(ui.get_update_text().contains("new version") && ui.get_update_detail().contains("Flatpak installs it in the background"));
-    // "Later" hides the offer
-    ui.invoke_update_dismiss();
-    assert_eq!(ui.get_update_state(), 0);
-    // an install in progress, in the user's language
-    show(Phase::Working(42));
-    assert_eq!(ui.get_update_state(), 2);
-    assert!(ui.get_update_text().contains("42 %"));
-    {
-        let mut st = state.lock().unwrap();
-        crate::apply_language(&ui, &mut st, "de");
-    }
-    assert!(ui.get_update_text().contains("Launcher-Update wird installiert"), "{}", ui.get_update_text());
-    {
-        let mut st = state.lock().unwrap();
-        crate::apply_language(&ui, &mut st, "en");
-    }
-    // failures and refusals can be retried; the retry without a portal ends as a clear failure, never as a crash
-    show(Phase::Failed(Failure::Network));
-    assert_eq!(ui.get_update_state(), 5);
-    ui.invoke_update_action();
-    assert_eq!(ui.get_update_state(), 5, "no portal handle in the test: the retry fails visibly");
-    // after the install the same button closes the launcher so that the new version starts next time
-    show(Phase::RestartNeeded);
-    assert_eq!((ui.get_update_state(), ui.get_update_button().as_str()), (3, "Close launcher"));
-    assert!(!mc.load(Ordering::SeqCst));
-    ui.invoke_update_action();
-    assert!(mc.load(Ordering::SeqCst) && !ui.window().is_visible(), "the launcher left");
-}
-
-#[test]
-fn the_release_notice_is_a_quiet_hint_whose_button_only_opens_the_release_page() {
+fn the_release_notice_is_a_quiet_hint_whose_button_only_opens_the_download_area_of_the_web_site() {
     let (ui, state, mc, _p) = wired("notice");
-    assert_eq!(ui.get_update_state(), 0, "nothing is shown by default (offline, not newer, not Windows)");
-    let page = format!("{}/releases/tag/v0.4.0", tsw_launch::project::REPO_URL);
+    assert_eq!(ui.get_update_state(), 0, "nothing is shown by default (offline, not newer, not a stable Flatpak)");
+    let page = tsw_launch::releasenotice::download_page(tsw_launch::project::WEBSITE_URL, tsw_launch::releasenotice::Platform::current());
     {
         let mut st = state.lock().unwrap();
         st.update.notice = Some(tsw_launch::releasenotice::Notice { version: "0.4.0".into(), url: page.clone() });
@@ -1290,7 +1247,7 @@ fn the_release_notice_is_a_quiet_hint_whose_button_only_opens_the_release_page()
     }
     crate::OPENED_PAGES.lock().unwrap().clear();
     ui.invoke_update_action();
-    assert_eq!(*crate::OPENED_PAGES.lock().unwrap(), [page], "the button opens exactly the official release page of that version");
+    assert_eq!(*crate::OPENED_PAGES.lock().unwrap(), [page], "the button opens exactly the download area of the web site for this platform");
     assert!(!mc.load(Ordering::SeqCst) && ui.window().is_visible(), "nothing is installed and the launcher stays");
     assert_eq!(ui.get_update_state(), 6, "the notice stays; there is no \"Later\" button and nothing else changes");
     // the callback behind the removed "Later" button must not hide this notice either (the notice shows again at the next start anyway)
@@ -1356,21 +1313,28 @@ fn the_launcher_update_overlay_is_one_element_at_the_bottom_right_that_moves_not
 }
 
 #[test]
-fn an_address_outside_the_official_release_pages_is_never_opened() {
+fn an_address_outside_the_download_areas_of_the_web_site_is_never_opened() {
+    use tsw_launch::releasenotice::{download_page, Platform};
     crate::OPENED_PAGES.lock().unwrap().clear();
-    let repo = tsw_launch::project::REPO_URL;
+    let site = tsw_launch::project::WEBSITE_URL;
     for bad in [
-        "https://evil.example/releases/tag/v1.0.0".to_string(),
-        "http://github.com/Glaubenskrieger/TSW-Forever/releases/tag/v1.0.0".to_string(),
-        format!("{repo}/releases/download/v1.0.0/setup.exe"),
-        format!("{repo}/releases/tag/v1.0.0 & calc"),
-        format!("{repo}/releases/tag/v1.0.0?x=1"),
-        format!("{repo}-evil/releases/tag/v1.0.0"),
+        "https://evil.example/#download-linux".to_string(),
+        "http://glaubenskrieger.github.io/TSW-Forever/#download-linux".to_string(),
+        format!("{site}#download-linux & calc"),
+        format!("{site}#download-linux?x=1"),
+        format!("{site}x#download-windows"),
+        site.to_string(),
+        format!("{}/releases/tag/v1.0.0", tsw_launch::project::REPO_URL),
+        format!("{}/releases/download/v1.0.0/setup.exe", tsw_launch::project::REPO_URL),
         "file:///c:/windows/system32/calc.exe".to_string(),
     ] {
-        assert!(!crate::open_release_page(&bad), "{bad}");
+        assert!(!crate::open_download_page(&bad), "{bad}");
     }
     assert!(crate::OPENED_PAGES.lock().unwrap().is_empty());
+    for good in [download_page(site, Platform::Linux), download_page(site, Platform::Windows)] {
+        assert!(crate::open_download_page(&good), "{good}");
+    }
+    assert_eq!(crate::OPENED_PAGES.lock().unwrap().len(), 2);
 }
 
 #[test]
@@ -1407,34 +1371,27 @@ fn the_installed_version_sits_quietly_at_the_bottom_right_and_gives_way_to_updat
 
 const LANGUAGES: [&str; 6] = ["en", "de", "fr", "es", "pt-BR", "pl"];
 
-fn long_error() -> String {
-    "the remote server answered with an error that no one has translated and that goes on and on, naming the object, the repository, the reference and the signature in detail; ".repeat(4)
+/// What the overlay tests put on the screen: nothing, or the notice that a newer version exists (the only launcher-update display of the product builds).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Case {
+    Nothing,
+    Notice,
 }
 
-/// The update situations of the overlay: (name, Flatpak phase or None for the Windows notice).
-fn overlay_cases() -> Vec<(&'static str, Option<tsw_launch::update::flatpak::Phase>)> {
-    use tsw_launch::update::flatpak::{Failure, Phase};
-    vec![
-        ("available", Some(Phase::Available)),
-        ("working", Some(Phase::Working(42))),
-        ("restart", Some(Phase::RestartNeeded)),
-        ("nothing", Some(Phase::NothingToInstall)),
-        ("not-allowed", Some(Phase::Failed(Failure::NotAllowed))),
-        ("network", Some(Phase::Failed(Failure::Network))),
-        ("failed-long", Some(Phase::Failed(Failure::Other(long_error())))),
-        ("notice", None),
-    ]
+/// The situations of the overlay: (name, case).
+fn overlay_cases() -> Vec<(&'static str, Case)> {
+    vec![("notice", Case::Notice)]
 }
 
-fn show_case(ui: &MainWindow, state: &Shared, case: &Option<tsw_launch::update::flatpak::Phase>) {
+fn show_case(ui: &MainWindow, state: &Shared, case: &Case) {
     let mut st = state.lock().unwrap();
-    st.update.phase = tsw_launch::update::flatpak::Phase::Idle;
-    st.update.dismissed = false;
-    st.update.notice = None;
-    match case {
-        Some(p) => st.update.phase = p.clone(),
-        None => st.update.notice = Some(tsw_launch::releasenotice::Notice { version: "0.4.0".into(), url: format!("{}/releases/tag/v0.4.0", tsw_launch::project::REPO_URL) }),
-    }
+    st.update.notice = match case {
+        Case::Nothing => None,
+        Case::Notice => Some(tsw_launch::releasenotice::Notice {
+            version: "0.4.0".into(),
+            url: tsw_launch::releasenotice::download_page(tsw_launch::project::WEBSITE_URL, tsw_launch::releasenotice::Platform::Linux),
+        }),
+    };
     crate::render(ui, &st);
     ui.set_version_info(slint::SharedString::new()); // the quiet version line gives way to a notice; keep it out of the comparison
 }
@@ -1474,7 +1431,7 @@ fn changed_box(a: &[slint::Rgb8Pixel], b: &[slint::Rgb8Pixel], w: usize) -> Opti
 }
 
 /// The overlay of one case, in LOGICAL pixels: (left, top, right, bottom), measured as the area that changes when it appears.
-fn overlay_box(ui: &MainWindow, state: &Shared, case: &Option<tsw_launch::update::flatpak::Phase>, baseline: &(usize, Vec<slint::Rgb8Pixel>), scale: f32) -> (f32, f32, f32, f32) {
+fn overlay_box(ui: &MainWindow, state: &Shared, case: &Case, baseline: &(usize, Vec<slint::Rgb8Pixel>), scale: f32) -> (f32, f32, f32, f32) {
     show_case(ui, state, case);
     let (w, with) = frame(ui);
     assert_eq!(w, baseline.0);
@@ -1505,14 +1462,11 @@ fn the_overlay_sits_at_the_bottom_right_in_every_language_and_state_and_moves_no
             let mut st = state.lock().unwrap();
             crate::apply_language(&ui, &mut st, lang);
         }
-        show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+        show_case(&ui, &state, &Case::Nothing);
         let baseline = frame(&ui);
         for (name, case) in overlay_cases() {
             let boxed = overlay_box(&ui, &state, &case, &baseline, 1.0);
-            check_geometry(&format!("{lang}/{name}"), boxed, name != "failed-long");
-            if name == "failed-long" {
-                assert!(boxed.3 - boxed.1 > 200.0, "{lang}: the long error reaches the height limit and scrolls instead of growing without end");
-            }
+            check_geometry(&format!("{lang}/{name}"), boxed, true);
         }
     }
 }
@@ -1527,11 +1481,11 @@ fn the_overlay_has_the_same_place_and_size_at_100_125_150_175_and_200_percent() 
                 let mut st = state.lock().unwrap();
                 crate::apply_language(&ui, &mut st, lang);
             }
-            show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+            show_case(&ui, &state, &Case::Nothing);
             let baseline = frame(&ui);
-            for (name, case) in overlay_cases().into_iter().filter(|(n, _)| ["available", "working", "failed-long", "notice"].contains(n)) {
+            for (name, case) in overlay_cases() {
                 let boxed = overlay_box(&ui, &state, &case, &baseline, scale);
-                check_geometry(&format!("{lang}/{name} at {}%", (scale * 100.0) as u32), boxed, name != "failed-long");
+                check_geometry(&format!("{lang}/{name} at {}%", (scale * 100.0) as u32), boxed, true);
             }
         }
     }
@@ -1574,7 +1528,7 @@ fn the_overlay_buttons_work_with_one_click_and_the_overlay_never_hides_the_main_
             let mut st = state.lock().unwrap();
             crate::apply_language(&ui, &mut st, lang);
         }
-        show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+        show_case(&ui, &state, &Case::Nothing);
         let baseline = frame(&ui);
         for (name, case) in overlay_cases() {
             let bb = overlay_box(&ui, &state, &case, &baseline, 1.0);
@@ -1588,20 +1542,14 @@ fn the_overlay_buttons_work_with_one_click_and_the_overlay_never_hides_the_main_
             // the main action: reachable unless it is hidden while installing; one click, one action
             let mut found = hit_points(&ui, bb, &[&act, &later, &second]).into_iter();
             let (acts, laters, seconds) = (found.next().unwrap(), found.next().unwrap(), found.next().unwrap());
-            assert_eq!(acts.is_empty(), name == "working", "{what}: the main button exists exactly when the update is not installing");
-            assert_eq!(laters.is_empty(), !["available", "nothing", "not-allowed", "network", "failed-long"].contains(&name), "{what}: Later exists for offer, nothing to install and failures only");
-            assert!(seconds.is_empty(), "{what}: no second button for the Flatpak update");
+            assert!(!acts.is_empty(), "{what}: the main button exists");
+            assert!(laters.is_empty(), "{what}: the notice has no Later button");
+            assert!(seconds.is_empty(), "{what}: no second button");
             if let Some(&(x, y)) = acts.get(acts.len() / 2) {
                 act.set(0);
                 later.set(0);
                 click(&ui, x, y);
                 assert_eq!((act.get(), later.get()), (1, 0), "{what}: one click on the main button acts once and only there");
-            }
-            if let Some(&(x, y)) = laters.get(laters.len() / 2) {
-                act.set(0);
-                later.set(0);
-                click(&ui, x, y);
-                assert_eq!((act.get(), later.get()), (0, 1), "{what}: one click on Later acts once and only there");
             }
             // the buttons are not tiny: about 34 px high and wider than 60 px (measured with a 5 px grid), so that they are easy to hit
             if !acts.is_empty() {
@@ -1662,20 +1610,19 @@ fn render_update_overlay_snapshots_for_visual_review_when_asked() {
 #[test]
 fn the_overlay_is_not_part_of_the_advanced_view_and_leaves_with_the_notice() {
     let (ui, state, _mc, _p) = wired("overlay-advanced");
-    show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+    show_case(&ui, &state, &Case::Nothing);
     ui.set_advanced(true);
     let baseline = frame(&ui);
-    show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Available));
+    show_case(&ui, &state, &Case::Notice);
     let (_, with) = frame(&ui);
     assert!(changed_box(&baseline.1, &with, baseline.0).is_none(), "the scrolling advanced view shows no overlay");
     ui.set_advanced(false);
-    show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Idle));
+    show_case(&ui, &state, &Case::Nothing);
     let normal = frame(&ui);
-    show_case(&ui, &state, &Some(tsw_launch::update::flatpak::Phase::Available));
-    ui.invoke_update_dismiss();
-    ui.set_version_info(slint::SharedString::new());
-    let (_, after_later) = frame(&ui);
-    assert!(changed_box(&normal.1, &after_later, normal.0).is_none(), "after Later the view is exactly the view without any notice");
+    show_case(&ui, &state, &Case::Notice);
+    show_case(&ui, &state, &Case::Nothing);
+    let (_, without) = frame(&ui);
+    assert!(changed_box(&normal.1, &without, normal.0).is_none(), "without the notice the view is exactly the view without any notice");
 }
 
 #[cfg(feature = "windows-self-update")]

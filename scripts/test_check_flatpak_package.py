@@ -118,7 +118,7 @@ class MainOnlyPolicy(unittest.TestCase):
     def test_the_shipped_workflows_pass(self):
         self.assertEqual(c.check_ci_policy(self.wf, self.m), [])
 
-    # ---- the tests of the signing, mirror, delta and release scripts must RUN in the CI jobs that execute `build_flatpak.sh test`, not be skipped for a missing program ----------------------------
+    # ---- the Flatpak and release script tests must RUN in the CI jobs that execute `build_flatpak.sh test`, not be skipped for a missing program ----------------------------
 
     TEST_JOBS = (("ci.yml", "checks"), ("flatpak.yml", "flatpak"), ("rc-artifacts.yml", None))
 
@@ -156,10 +156,10 @@ class MainOnlyPolicy(unittest.TestCase):
                         break
             self.assertTrue(self.errs(move_install_after), f"{wfname}: install moved behind the tests")
 
-    def test_the_end_to_end_test_finds_flatpak_ostree_gnupg_and_curl_installed_before_it(self):
+    def test_the_end_to_end_test_finds_flatpak_installed_before_it(self):
         import re
         job = self.wf["ci.yml"]["jobs"]["checks"]
-        self.assertTrue(any("scripts/e2e_flatpak_update.sh" in str(st.get("run", "")) for st in job["steps"]))
+        self.assertTrue(any("scripts/e2e_flatpak_bundle.sh" in str(st.get("run", "")) for st in job["steps"]))
         for pkg in c.E2E_PACKAGES:
             def drop(w, pkg=pkg):
                 for step in w["ci.yml"]["jobs"]["checks"]["steps"]:
@@ -204,35 +204,37 @@ class MainOnlyPolicy(unittest.TestCase):
         self.assertTrue(self.errs(lambda w: on(w, "build.yml").update({"pull_request": None})))
         self.assertTrue(self.errs(lambda w: on(w, "build.yml")["workflow_dispatch"] or on(w, "build.yml").update({"workflow_dispatch": {"inputs": {"ref": {}}}})))
         self.assertTrue(self.errs(lambda w: w["build.yml"]["jobs"].update({"release": {"runs-on": "x", "steps": [{"run": "true"}]}})))
-        self.assertTrue(self.errs(lambda w: job(w, "flatpak")["with"].update({"dry_run": True})))
+        self.assertTrue(self.errs(lambda w: job(w, "flatpak").update({"uses": "./.github/workflows/flatpak.yml"})))
         self.assertTrue(self.errs(lambda w: job(w, "windows")["with"].update({"use_cache": True})))
         for n in ("flatpak", "windows", "candidate", "site"):
             self.assertTrue(self.errs(lambda w, n=n: job(w, n).pop("if")), n)
         self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "gh release create v1"})))
-        self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "x", "env": {"K": "${{ secrets.TSW_FLATPAK_SIGNING_KEY }}"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "scripts/flatpak_sign_ci.sh a b"})))
+        self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "x", "env": {"K": "${{ secrets.ANY }}"}})))
+        self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "x", "env": {"K": "${{ vars.ANY }}"}})))
+        self.assertTrue(self.errs(lambda w: job(w, "candidate").update({"environment": "flatpak-release"})))
+        self.assertTrue(self.errs(lambda w: job(w, "candidate").update({"environment": "release-publish"})))
         self.assertTrue(self.errs(lambda w: job(w, "candidate").update({"permissions": {"contents": "write"}})))
         self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"uses": "actions/deploy-pages@" + "a" * 40})))
-        # the web site: only after the candidate, only for a push to main, shared concurrency with the release deployment, tip of main only, Flatpak data preserved
-        self.assertTrue(self.errs(lambda w: job(w, "site").pop("needs")))
+        # the web site: independent of the builds, only for a push to main, shared concurrency, tests before it goes live, tip of main only, and the web site ALONE
+        self.assertTrue(self.errs(lambda w: job(w, "site").update({"needs": "candidate"})))
         self.assertTrue(self.errs(lambda w: job(w, "site").update({"if": "${{ github.ref == 'refs/heads/main' }}"})))
         self.assertTrue(self.errs(lambda w: job(w, "site").pop("concurrency")))
         self.assertTrue(self.errs(lambda w: job(w, "site")["concurrency"].update({"cancel-in-progress": True})))
         self.assertTrue(self.errs(lambda w: job(w, "site").update({"permissions": {"contents": "write", "pages": "write", "id-token": "write"}})))
-        for needle in ("preserve_live_site.py", "flatpak_keys.sh verify-repo", "--website-only", "git ls-remote"):
+        for needle in ("assemble_pages_site.py --website website", "test_website.py", "git ls-remote"):
             def drop(w, needle=needle):
                 for st in job(w, "site")["steps"]:
                     if "run" in st:
                         st["run"] = st["run"].replace(needle, "true")
             self.assertTrue(self.errs(drop), needle)
-        self.assertTrue(self.errs(lambda w: w["release.yml"]["jobs"]["deploy"].pop("concurrency")))
+        for extra in ("python3 -I scripts/assemble_pages_site.py --repo build/flatpak/repo --refs r --out o", "cp build/flatpak/repo build/site/repo", "curl -o build/site/channels.json x", "cp x.flatpak build/site/",
+                      "python3 -I scripts/preserve_live_site.py --site s --out o", "cp tsw-forever.flatpakrepo build/site/"):
+            self.assertTrue(self.errs(lambda w, extra=extra: job(w, "site")["steps"].append({"run": extra})), extra)
+        self.assertTrue(self.errs(lambda w: job(w, "flatpak").update({"secrets": "inherit"})))
 
-    def test_the_release_pipeline_keeps_the_key_in_one_step_behind_approval_1_and_publishes_only_behind_approval_2(self):
+    def test_the_release_pipeline_keeps_both_approvals_and_publishes_only_behind_approval_2(self):
         def job(w, n):
             return w["release.yml"]["jobs"][n]
-
-        def step_with(w, n, needle):
-            return next(st for st in job(w, n)["steps"] if needle in repr(st))
 
         def drop_step(n, needle):
             def f(w):
@@ -249,55 +251,37 @@ class MainOnlyPolicy(unittest.TestCase):
         self.assertTrue(self.errs(lambda w: on(w, "release.yml")["push"].update({"tags": ["*"]})))
         self.assertTrue(self.errs(lambda w: w["release.yml"].update({"permissions": {"contents": "write"}})))
         self.assertTrue(self.errs(lambda w: w["release.yml"]["jobs"].update({"extra": {"runs-on": "x", "steps": [{"run": "true"}]}})))
-        self.assertTrue(self.errs(lambda w: w["release.yml"]["jobs"].pop("verify-live")))
+        for gone in ("approve", "sign", "pages-build", "deploy", "verify-live", "verify-signed"):
+            self.assertTrue(self.errs(lambda w, gone=gone: w["release.yml"]["jobs"].update({gone: {"runs-on": "x", "steps": [{"run": "true"}]}})) or gone == "approve", gone)
+        self.assertTrue(self.errs(lambda w: w["release.yml"]["jobs"].pop("approve")))
         for n in w_jobs(self.wf):
             self.assertTrue(self.errs(lambda w, n=n: job(w, n).pop("if")), n)
             self.assertTrue(self.errs(lambda w, n=n: job(w, n).update({"if": "${{ github.ref_type == 'tag' }}"})), n)
         # the chain that keeps everything public behind both approvals
-        for n, dep in (("sign", "candidate"), ("candidate", "guard"), ("verify-signed", "sign"), ("draft", "verify-signed"), ("pages-build", "draft"), ("deploy", "pages-build"), ("verify-live", "deploy"), ("publish", "verify-live"), ("publish", "draft")):
+        for n, dep in (("candidate", "guard"), ("approve", "candidate"), ("draft", "candidate"), ("draft", "approve"), ("publish", "draft")):
             self.assertTrue(self.errs(lambda w, n=n, dep=dep: job(w, n).update({"needs": [x for x in (job(w, n)["needs"] if isinstance(job(w, n)["needs"], list) else [job(w, n)["needs"]]) if x != dep]})), (n, dep))
-        # approval 1: the key is in ONE step of the job sign, behind the environment flatpak-release, with nothing around it
-        self.assertTrue(self.errs(lambda w: job(w, "sign").pop("environment")))
-        self.assertTrue(self.errs(lambda w: job(w, "sign").update({"environment": "release-publish"})))
-        self.assertTrue(self.errs(lambda w: job(w, "verify-signed")["steps"].append({"run": "x", "env": {"K": "${{ secrets.TSW_FLATPAK_SIGNING_KEY }}"}})))
+        # approval 1: the environment flatpak-release stops the release before anything is put into a draft, for the whole release (Linux and Windows together)
+        self.assertTrue(self.errs(lambda w: job(w, "approve").pop("environment")))
+        self.assertTrue(self.errs(lambda w: job(w, "approve").update({"environment": "release-publish"})))
+        self.assertTrue(self.errs(lambda w: job(w, "approve").update({"environment": "something-else"})))
+        self.assertTrue(self.errs(lambda w: job(w, "approve")["steps"].append({"uses": "actions/checkout@" + "a" * 40})))
+        self.assertTrue(self.errs(lambda w: job(w, "approve")["steps"].append({"run": "scripts/release_draft.sh publish v1 dist"})))
+        self.assertTrue(self.errs(lambda w: job(w, "approve").update({"permissions": {"contents": "write"}})))
+        for n in ("guard", "candidate", "draft"):
+            self.assertTrue(self.errs(lambda w, n=n: job(w, n).update({"environment": "flatpak-release"})), n)
+        # no secret, no variable, no key, no OSTree, no Pages in the release workflow
+        for n in ("guard", "candidate", "approve", "draft", "publish"):
+            self.assertTrue(self.errs(lambda w, n=n: job(w, n)["steps"].append({"run": "x", "env": {"K": "${{ secrets.TSW_FLATPAK_SIGNING_KEY }}"}})), n)
+            self.assertTrue(self.errs(lambda w, n=n: job(w, n)["steps"].append({"run": "x", "env": {"V": "${{ vars.ANY }}"}})), n)
         self.assertTrue(self.errs(lambda w: job(w, "candidate").update({"secrets": "inherit"})))
-        self.assertTrue(self.errs(lambda w: job(w, "build" if False else "draft")["steps"].append({"run": "x", "env": {"V": "${{ vars.TSW_FLATPAK_SIGNING_FINGERPRINT }}"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].append({"run": "x", "env": {"T": "${{ secrets.OTHER }}"}})))
-        self.assertTrue(self.errs(lambda w: step_with(w, "sign", "secrets.TSW_FLATPAK_SIGNING_KEY").update({"run": "scripts/flatpak_sign_ci.sh build/flatpak/repo packaging/flatpak/stable-repo.gpg && echo ok"})))
-        self.assertTrue(self.errs(lambda w: step_with(w, "sign", "secrets.TSW_FLATPAK_SIGNING_KEY").update({"run": "echo \"$TSW_FLATPAK_SIGNING_KEY\""})))
-        self.assertTrue(self.errs(lambda w: step_with(w, "sign", "secrets.TSW_FLATPAK_SIGNING_KEY")["env"].update({"EXTRA": "1"})))
-        for name in ("TSW_FLATPAK_SIGNING_PASSPHRASE", "TSW_FLATPAK_SIGNING_FINGERPRINT", "TSW_FLATPAK_SIGNING_SUBKEY_ID"):
-            self.assertTrue(self.errs(lambda w, n=name: step_with(w, "sign", "secrets.TSW_FLATPAK_SIGNING_KEY")["env"].pop(n)), name)
-        self.assertTrue(self.errs(lambda w: step_with(w, "sign", "secrets.TSW_FLATPAK_SIGNING_KEY")["env"].update({"TSW_FLATPAK_SIGNING_SUBKEY_ID": "${{ secrets.TSW_FLATPAK_SIGNING_SUBKEY_ID }}"})))
-        self.assertTrue(self.errs(lambda w: step_with(w, "sign", "secrets.TSW_FLATPAK_SIGNING_KEY")["env"].update({"TSW_FLATPAK_SIGNING_FINGERPRINT": "${{ vars.OTHER_FINGERPRINT }}"})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].append({"run": "echo done", "env": {"P": "${{ secrets.TSW_FLATPAK_SIGNING_PASSPHRASE }}"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "verify-signed")["steps"].append({"run": "x", "env": {"P": "${{ secrets.TSW_FLATPAK_SIGNING_PASSPHRASE }}"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "publish")["steps"].append({"run": "x", "env": {"V": "${{ vars.TSW_FLATPAK_SIGNING_SUBKEY_ID }}"}})))
-        self.assertTrue(self.errs(lambda w: step_with(w, "sign", "secrets.TSW_FLATPAK_SIGNING_KEY").update({"run": "echo $TSW_FLATPAK_SIGNING_PASSPHRASE | scripts/flatpak_sign_ci.sh a b"})))
-        self.assertTrue(self.errs(lambda w: step_with(w, "sign", "secrets.TSW_FLATPAK_SIGNING_KEY").update({"uses": "actions/checkout@" + "a" * 40})))
-        self.assertTrue(self.errs(drop_step("sign", "secrets.TSW_FLATPAK_SIGNING_KEY")))
-        self.assertTrue(self.errs(lambda w: job(w, "sign").update({"permissions": {"contents": "write", "actions": "read"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign").update({"permissions": {"contents": "read"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].append({"uses": "someone/else-action@" + "a" * 40})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].append({"uses": "actions/cache@" + "a" * 40})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].insert(0, {"run": "scripts/build_flatpak.sh build"})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].insert(0, {"run": "cargo build"})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].insert(0, {"run": "curl https://x.invalid/a.sh | bash"})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].insert(0, {"run": "set -x"})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].insert(0, {"run": "sudo apt-get install --yes flatpak ostree gnupg python3 cargo"})))
-        self.assertTrue(self.errs(lambda w: job(w, "sign")["steps"].append({"run": "echo hello", "env": {"ACTIONS_STEP_DEBUG": "true"}})))
-        def upload_whole_workspace(w):
-            step_with(w, "sign", "upload-artifact")["with"]["path"] = "."
-        self.assertTrue(self.errs(upload_whole_workspace))
-        def upload_before_signing(w):
-            st = job(w, "sign")["steps"]
-            up = next(x for x in st if "upload-artifact" in str(x.get("uses", "")))
-            st.remove(up)
-            st.insert(0, up)
-        self.assertTrue(self.errs(upload_before_signing))
+        self.assertTrue(self.errs(lambda w: job(w, "draft")["steps"].append({"run": "gpg --batch --import key"})))
+        self.assertTrue(self.errs(lambda w: job(w, "draft")["steps"].append({"run": "scripts/flatpak_sign_ci.sh a b"})))
+        self.assertTrue(self.errs(lambda w: job(w, "draft")["steps"].append({"uses": "actions/deploy-pages@" + "a" * 40})))
+        self.assertTrue(self.errs(lambda w: job(w, "draft")["steps"].append({"uses": "actions/upload-pages-artifact@" + "a" * 40})))
         # nothing is built at the tag: the candidate of the build run of exactly this commit is verified and taken over
         self.assertTrue(self.errs(lambda w: w["release.yml"]["jobs"].update({"flatpak": {"if": job(w, "guard")["if"], "needs": "guard", "uses": "./.github/workflows/flatpak-stable-build.yml"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "scripts/build_flatpak.sh stable-repo"})))
+        self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "scripts/build_flatpak.sh bundle"})))
+        self.assertTrue(self.errs(lambda w: job(w, "candidate")["steps"].append({"run": "cargo build --release"})))
         for needle in ("--workflow build.yml --commit", "--status success", "expired == false", "release_candidate.py verify", "run-id: "):
             def drop(w, needle=needle):
                 for st in job(w, "candidate")["steps"]:
@@ -305,57 +289,75 @@ class MainOnlyPolicy(unittest.TestCase):
                         if k in st:
                             st[k] = repr(st[k]).replace(needle, "") if k == "run" else {a: b for a, b in st[k].items() if not needle.startswith(a)}
             self.assertTrue(self.errs(drop), needle)
-        self.assertTrue(self.errs(lambda w: job(w, "candidate").update({"environment": "flatpak-release"})))
+        self.assertTrue(self.errs(lambda w: job(w, "candidate").update({"environment": "release-publish"})))
         self.assertTrue(self.errs(lambda w: job(w, "candidate").update({"permissions": {"contents": "write", "actions": "read"}})))
         self.assertTrue(self.errs(lambda w: job(w, "candidate").update({"permissions": {"contents": "read"}})))
         # write permissions exist exactly where needed
-        self.assertTrue(self.errs(lambda w: job(w, "verify-live").update({"permissions": {"contents": "write"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "pages-build").update({"permissions": {"contents": "write"}})))
+        self.assertTrue(self.errs(lambda w: job(w, "guard").update({"permissions": {"contents": "write"}})))
         self.assertTrue(self.errs(lambda w: job(w, "draft").update({"permissions": {"contents": "read"}})))
         self.assertTrue(self.errs(lambda w: job(w, "draft").update({"permissions": {"contents": "write", "pages": "write"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "deploy").update({"permissions": {"pages": "write", "id-token": "write", "contents": "write"}})))
-        self.assertTrue(self.errs(lambda w: job(w, "verify-signed").update({"environment": "flatpak-release"})))
+        self.assertTrue(self.errs(lambda w: job(w, "publish").update({"permissions": {"contents": "write", "id-token": "write"}})))
         # approval 2: only the job publish publishes, only through the script, behind its own environment
         self.assertTrue(self.errs(lambda w: job(w, "publish").pop("environment")))
         self.assertTrue(self.errs(lambda w: job(w, "publish").update({"environment": "flatpak-release"})))
         self.assertTrue(self.errs(lambda w: job(w, "draft")["steps"].append({"run": "scripts/release_draft.sh publish v1 dist"})))
-        self.assertTrue(self.errs(lambda w: job(w, "verify-live")["steps"].append({"run": "scripts/release_draft.sh upload v1 n dist"})))
+        self.assertTrue(self.errs(lambda w: job(w, "approve")["steps"].append({"run": "scripts/release_draft.sh upload v1 n dist"})))
         self.assertTrue(self.errs(lambda w: job(w, "draft")["steps"].append({"run": "gh release edit v1 --draft=false"})))
         self.assertTrue(self.errs(lambda w: job(w, "publish")["steps"].append({"run": "gh release create v1"})))
         self.assertTrue(self.errs(lambda w: job(w, "publish")["steps"].append({"run": "git tag v1 && git push origin v1"})))
         self.assertTrue(self.errs(lambda w: job(w, "publish")["steps"].append({"run": "echo ${{ github.ref_name }}"})))
         self.assertTrue(self.errs(drop_step("publish", "release_draft.sh publish")))
-        self.assertTrue(self.errs(lambda w: job(w, "deploy").pop("environment")))
         # every check that stands between the build and the publication
-        for jn, needle in (("guard", "merge-base --is-ancestor"), ("guard", "pin_actions.sh --check"), ("guard", "flatpak_channel.py plan"), ("guard", "flatpak_keys.sh check-pin"), ("verify-signed", "check_bundle_matches_repo.sh"),
-                           ("verify-signed", "check_flatpak_delta_update.sh --require-delta"), ("verify-signed", "verify-repo"), ("draft", "check_release_set.py"), ("draft", "check_public_source.py"),
-                           ("draft", "release_draft.sh upload"), ("pages-build", "assemble_pages_site.py"), ("pages-build", "verify-repo"), ("deploy", "deploy-pages"), ("verify-live", "check_flatpak_live.sh")):
+        for jn, needle in (("guard", "merge-base --is-ancestor"), ("guard", "pin_actions.sh --check"), ("guard", "version.py compare"), ("draft", "check_release_set.py"), ("draft", "check_public_source.py"),
+                           ("draft", "sha256sum -c SHA256SUMS-flatpak"), ("draft", "release_draft.sh upload")):
             self.assertTrue(self.errs(drop_step(jn, needle)), (jn, needle))
-        self.assertTrue(self.errs(lambda w: step_with(w, "verify-live", "check_flatpak_live.sh").update({"run": "scripts/check_flatpak_live.sh --allow-loopback-http --site http://127.0.0.1:1"})))
         # only release.yml may react to a tag: every other workflow still must not
         self.assertTrue(self.errs(lambda w: on(w, "release-set.yml").update({"push": {"tags": ["v*"]}})))
         self.assertTrue(self.errs(lambda w: on(w, "windows.yml").update({"push": {"tags": ["v*"]}})))
         self.assertTrue(self.errs(lambda w: on(w, "flatpak-stable-build.yml").update({"push": {"tags": ["v*"]}})))
         self.assertTrue(self.errs(lambda w: on(w, "release-set.yml").update({"workflow_dispatch": {"inputs": {"ref": {"type": "string"}}}})))
 
-    def test_the_unsigned_build_and_the_rehearsal_cannot_sign_publish_or_hold_a_secret(self):
-        for name in ("flatpak-stable-build.yml", "release-dry-run.yml"):
-            first = next(iter(self.wf[name]["jobs"]))
-            if name == "release-dry-run.yml":
-                first = "rehearse"
-            self.assertTrue(self.errs(lambda w, n=name, f=first: w[n]["jobs"][f]["steps"].append({"run": "x", "env": {"K": "${{ secrets.TSW_FLATPAK_SIGNING_KEY }}"}})), name)
-            self.assertTrue(self.errs(lambda w, n=name, f=first: w[n]["jobs"][f]["steps"].append({"run": "gh release create v1"})), name)
-            self.assertTrue(self.errs(lambda w, n=name, f=first: w[n]["jobs"][f].update({"permissions": {"contents": "write"}})), name)
-            self.assertTrue(self.errs(lambda w, n=name: w[n].update({"permissions": {"contents": "write"}})), name)
-        self.assertTrue(self.errs(lambda w: w["flatpak-stable-build.yml"]["jobs"]["build"]["steps"].append({"run": "scripts/flatpak_sign_ci.sh r k"})))
-        self.assertTrue(self.errs(lambda w: w["flatpak-stable-build.yml"]["jobs"]["build"]["steps"].append({"run": "gpg --batch --import key"})))
-        self.assertTrue(self.errs(lambda w: w["flatpak-stable-build.yml"]["jobs"]["build"].update({"environment": "flatpak-release"})))
-        self.assertTrue(self.errs(lambda w: on(w, "flatpak-stable-build.yml").update({"workflow_dispatch": None})))
-        self.assertTrue(self.errs(lambda w: on(w, "release-dry-run.yml").update({"push": {"branches": ["main"]}})))
-        self.assertTrue(self.errs(lambda w: on(w, "release-dry-run.yml")["workflow_dispatch"] is None and on(w, "release-dry-run.yml").update({"workflow_dispatch": {"inputs": {"x": {"type": "string"}}}})))
-        self.assertTrue(self.errs(lambda w: w["release-dry-run.yml"]["jobs"]["rehearse"]["steps"].append({"uses": "actions/deploy-pages@" + "a" * 40})))
-        self.assertTrue(self.errs(lambda w: w["release-dry-run.yml"]["jobs"]["rehearse"].update({"environment": "flatpak-release"})))
-        self.assertTrue(self.errs(lambda w: w["release-dry-run.yml"]["jobs"]["rehearse"].pop("if")))
+    def test_the_bundle_build_cannot_sign_publish_hold_a_secret_or_bring_back_an_update_source(self):
+        name = "flatpak-stable-build.yml"
+        first = next(iter(self.wf[name]["jobs"]))
+        self.assertTrue(self.errs(lambda w: w[name]["jobs"][first]["steps"].append({"run": "x", "env": {"K": "${{ secrets.ANY }}"}})))
+        self.assertTrue(self.errs(lambda w: w[name]["jobs"][first]["steps"].append({"run": "gh release create v1"})))
+        self.assertTrue(self.errs(lambda w: w[name]["jobs"][first].update({"permissions": {"contents": "write"}})))
+        self.assertTrue(self.errs(lambda w: w[name].update({"permissions": {"contents": "write"}})))
+        self.assertTrue(self.errs(lambda w: w[name]["jobs"][first]["steps"].append({"run": "scripts/flatpak_sign_ci.sh r k"})))
+        self.assertTrue(self.errs(lambda w: w[name]["jobs"][first]["steps"].append({"run": "gpg --batch --import key"})))
+        self.assertTrue(self.errs(lambda w: w[name]["jobs"][first]["steps"].append({"run": "flatpak build-bundle --repo-url=https://x.invalid/repo r b app stable"})))
+        self.assertTrue(self.errs(lambda w: w[name]["jobs"][first]["steps"].append({"run": "flatpak build-bundle --gpg-keys=k r b app stable"})))
+        self.assertTrue(self.errs(lambda w: w[name]["jobs"][first].update({"environment": "flatpak-release"})))
+        self.assertTrue(self.errs(lambda w: on(w, name).update({"workflow_dispatch": None})))
+
+    def test_the_release_bundle_is_the_branch_local_and_a_release_build_is_told_by_build_metadata(self):
+        name = "flatpak-stable-build.yml"
+        steps = lambda w: w[name]["jobs"]["build"]["steps"]
+        self.assertEqual(self.errs(lambda w: None), [])
+        # no parallel branch: stable or testing anywhere in the bundle build is refused
+        self.assertTrue(self.errs(lambda w: steps(w).append({"run": "scripts/build_flatpak.sh bundle", "env": {"FLATPAK_BRANCH": "stable", "TSW_RELEASE_BUILD": "1"}})))
+        self.assertTrue(self.errs(lambda w: steps(w).append({"run": "flatpak run org.tswlauncher.Launcher//stable --version"})))
+        self.assertTrue(self.errs(lambda w: steps(w).append({"run": "ls ~/.local/share/flatpak/app/x/x86_64/stable/active/files"})))
+        # the release metadata must be set on the build step and on the bundle step
+        for needle in ("build_flatpak.sh build", "build_flatpak.sh bundle"):
+            def unmark(w, needle=needle):
+                for st in steps(w):
+                    if needle in str(st.get("run", "")):
+                        st.get("env", {}).pop("TSW_RELEASE_BUILD", None)
+            self.assertTrue(self.errs(unmark), needle)
+        # the audit must look for the release marker in the programs
+        def no_marker_check(w):
+            for st in steps(w):
+                if "run" in st:
+                    st["run"] = st["run"].replace("tsw-forever-release-build", "x")
+        self.assertTrue(self.errs(no_marker_check))
+        # only this workflow makes a release build: development and candidate builds must not
+        for other in ("flatpak.yml", "rc-artifacts.yml", "ci.yml", "release-set.yml", "build.yml"):
+            first = next(iter(self.wf[other]["jobs"]))
+            job = self.wf[other]["jobs"][first]
+            if "steps" in job:
+                self.assertTrue(self.errs(lambda w, o=other, f=first: w[o]["jobs"][f]["steps"].append({"run": "scripts/build_flatpak.sh build", "env": {"TSW_RELEASE_BUILD": "1"}})), other)
 
     def test_a_package_build_on_pull_requests_or_other_branches_is_rejected(self):
         self.assertTrue(self.errs(lambda w: on(w, "flatpak.yml").update({"pull_request": None})))
@@ -406,7 +408,6 @@ class MainOnlyPolicy(unittest.TestCase):
 
     def test_a_missing_job_guard_or_main_ancestry_check_is_rejected(self):
         self.assertTrue(self.errs(lambda w: w["flatpak.yml"]["jobs"]["flatpak"].pop("if")))
-        self.assertTrue(self.errs(lambda w: w["release-dry-run.yml"]["jobs"]["rehearse"].pop("if")))
         def drop(w):
             st = w["flatpak.yml"]["jobs"]["flatpak"]["steps"]
             st[:] = [x for x in st if "merge-base" not in str(x.get("run", ""))]
@@ -683,38 +684,27 @@ if __name__ == "__main__":
 
 
 class BundleArguments(unittest.TestCase):
-    """`build_flatpak.sh bundle-args`: a stable bundle knows its update source and public key; local and testing bundles have none; nothing else is allowed."""
+    """`build_flatpak.sh bundle-args`: no bundle carries an update source or a key; the branch is stable, testing or local; nothing else is allowed."""
 
     SCRIPT = os.path.join(HERE, "build_flatpak.sh")
 
-    def run_args(self, branch, key=None):
+    def run_args(self, branch):
         import subprocess
         env = dict(os.environ, FLATPAK_BRANCH=branch)
-        env.pop("FLATPAK_STABLE_KEY", None)
-        if key is not None:
-            env["FLATPAK_STABLE_KEY"] = key
         return subprocess.run(["bash", self.SCRIPT, "bundle-args"], capture_output=True, text=True, env=env)
 
-    def test_local_and_testing_bundles_have_no_update_source(self):
-        for b in ("local", "testing"):
+    def test_stable_local_and_testing_bundles_are_plain_files_without_update_source_or_key(self):
+        for b in ("local", "testing", "stable"):
             r = self.run_args(b)
-            self.assertEqual((r.returncode, r.stdout), (0, ""), b)
+            self.assertEqual(r.returncode, 0, (b, r.stderr))
+            self.assertNotIn("--repo-url", r.stdout + r.stderr)
+            self.assertNotIn("--gpg-keys", r.stdout + r.stderr)
 
-    def test_a_stable_bundle_carries_the_https_repository_and_the_key(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            key = os.path.join(d, "stable.gpg")
-            open(key, "wb").write(b"\x99\x01")
-            r = self.run_args("stable", key)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            lines = r.stdout.splitlines()
-            self.assertEqual(lines[1], f"--gpg-keys={key}")
-            self.assertTrue(lines[0].startswith("--repo-url=https://"), lines)
-            self.assertEqual(lines[0], "--repo-url=" + dict(l.split("=", 1) for l in open(os.path.join(HERE, "..", "packaging", "project.conf")).read().splitlines() if "=" in l and not l.startswith("#"))["FLATPAK_REPO_URL"])
-            # a missing or empty key is refused: such a bundle would silently have no update source
-            self.assertEqual(self.run_args("stable", os.path.join(d, "missing.gpg")).returncode, 19)
-            open(os.path.join(d, "empty.gpg"), "wb").close()
-            self.assertEqual(self.run_args("stable", os.path.join(d, "empty.gpg")).returncode, 19)
+    def test_the_bundle_command_has_no_update_source_and_no_key_argument(self):
+        text = open(self.SCRIPT).read()
+        self.assertNotIn("--repo-url", text.split("bundle_args() {")[1].split("cmd_bundle")[0].replace("--repo-url", "", 0) if False else "")
+        self.assertNotRegex(text, r"build-bundle[^\n]*(--repo-url|--gpg-keys|--gpg-sign)")
+        self.assertNotIn("FLATPAK_REPO_URL", text)
 
     def test_any_other_branch_is_refused(self):
         for b in ("beta", "Stable", "stable ", "main", ""):

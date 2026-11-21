@@ -63,6 +63,16 @@ pub const APP_ID: &str = env!("TSW_CHANNEL_APP_ID");
 /// The base64 line of the stable update public key compiled into this build (empty = update check disabled, see `packaging/channels/stable.conf`).
 pub const STABLE_UPDATE_KEY: &str = env!("TSW_UPDATE_KEY_STABLE");
 
+/// True in a RELEASE build: one made by the release packaging (`TSW_RELEASE_BUILD=1`, see `scripts/build_flatpak.sh` and `launcher/build.rs`), which is what the GitHub release carries.
+/// A development build, a test run and a build from the source archive are not release builds, whatever Flatpak branch they have (releases and developer builds both use the branch
+/// `local`). Only a release build asks for a newer version (`crate::releasenotice::linux_eligible`).
+pub const RELEASE_BUILD: bool = cfg!(release_build);
+
+/// A string that exists in release builds only (empty cfg elsewhere). The finished release program is scanned for it by the CI audit; a development program must not contain it.
+#[cfg(release_build)]
+#[used]
+pub static RELEASE_MARKER: &str = "tsw-forever-release-build";
+
 /// A string that exists in testing builds only (empty in a stable build). The finished stable binary is scanned for it.
 #[cfg(channel_testing)]
 #[used]
@@ -135,6 +145,12 @@ mod tests {
         for bad in ["", "Stable", "STABLE", "beta", "stable ", "stable\n", "nightly", "testing2"] {
             assert_eq!(Channel::parse(bad), None, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn a_release_build_is_told_by_the_build_metadata_and_not_by_the_branch() {
+        let marker = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../packaging/release-build"));
+        assert_eq!(RELEASE_BUILD, marker.is_file(), "RELEASE_BUILD follows the file that only the release packaging stages");
     }
 
     #[test]

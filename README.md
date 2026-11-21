@@ -2,7 +2,7 @@
 
 TSW-Forever is a free, unofficial launcher for the **original The Secret World (2012)** on **Linux and SteamOS** (Flatpak, through Wine/Proton) and on **Windows 10/11** (native, with an installer). It helps install the original game and remembers your game display and performance settings. The launcher window is available in English, German, French, Spanish, Brazilian Portuguese and Polish. It is not for **Secret World Legends**, and it provides no game servers or account registration.
 
-**Version `0.4.0`.** This guide covers installing the Linux Flatpak bundle (sections 2–9) and the Windows installer (section 2a). Download files from the public Releases page and check that the listed asset names match this guide. Hardware compatibility beyond the reported tests is not guaranteed.
+**Version `0.4.1`.** This guide covers installing the Linux Flatpak bundle (sections 2–9) and the Windows installer (section 2a). Download files from the public Releases page and check that the listed asset names match this guide. Hardware compatibility beyond the reported tests is not guaranteed.
 
 ## 1. Requirements
 
@@ -27,10 +27,10 @@ If the command is missing, install Flatpak through your distribution's software 
 
 Open the [TSW-Forever Releases page](https://github.com/Glaubenskrieger/TSW-Forever/releases). Under **Assets**, download these two files into the same folder:
 
-- `tsw-forever-0.4.0.flatpak` — the Linux application installer.
+- `tsw-forever-0.4.1.flatpak` — the Linux application installer.
 - `SHA256SUMS` — the matching checksums.
 
-The release also contains `tsw-forever-0.4.0-windows-setup.exe` (the Windows installer, section 2a) and the optional `tsw-forever-0.4.0-src.tar.gz` with the source code; the source archive is not needed to install or use the launcher. The GitHub-generated “Source code” ZIP is not an application installer. Use the project's release files rather than an arbitrary re-upload. Do not use an unverified re-upload.
+The release also contains `tsw-forever-0.4.1-windows-setup.exe` (the Windows installer, section 2a) and the optional `tsw-forever-0.4.1-src.tar.gz` with the source code; the source archive is not needed to install or use the launcher. The GitHub-generated “Source code” ZIP is not an application installer. Use the project's release files rather than an arbitrary re-upload. Do not use an unverified re-upload.
 
 Open a terminal **in the download folder** (many file managers offer “Open Terminal Here”). `./` in the following commands means that folder. Check the files:
 
@@ -38,14 +38,14 @@ Open a terminal **in the download folder** (many file managers offer “Open Ter
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
-The result must include `tsw-forever-0.4.0.flatpak: OK`. The optional source archive is checked too if present. If verification fails, stop and download the matching files again.
+The result must include `tsw-forever-0.4.1.flatpak: OK`. The optional source archive is checked too if present. If verification fails, stop and download the matching files again.
 
 ### Install for your user
 
 Install the local bundle:
 
 ```sh
-flatpak install --user ./tsw-forever-0.4.0.flatpak
+flatpak install --user ./tsw-forever-0.4.1.flatpak
 ```
 
 Read and confirm Flatpak's permission and installation prompts. **Do not use `sudo` for these commands.** The application ID is `org.tswlauncher.Launcher`.
@@ -62,10 +62,10 @@ flatpak install --user flathub org.freedesktop.Platform.GL32.default//25.08
 
 ### 2a. Windows installation
 
-Open the [TSW-Forever Releases page](https://github.com/Glaubenskrieger/TSW-Forever/releases) and download `tsw-forever-0.4.0-windows-setup.exe` and `SHA256SUMS` into the same folder. Compare the installer's checksum with the matching line of `SHA256SUMS` in PowerShell:
+Open the [TSW-Forever Releases page](https://github.com/Glaubenskrieger/TSW-Forever/releases) and download `tsw-forever-0.4.1-windows-setup.exe` and `SHA256SUMS` into the same folder. Compare the installer's checksum with the matching line of `SHA256SUMS` in PowerShell:
 
 ```powershell
-Get-FileHash .\tsw-forever-0.4.0-windows-setup.exe -Algorithm SHA256
+Get-FileHash .\tsw-forever-0.4.1-windows-setup.exe -Algorithm SHA256
 ```
 
 Then run the installer. It asks Windows for administrator permission once (UAC stays on) and installs the launcher below `C:\Program Files\TSW-Forever`. Its wizard is available in the six languages of the launcher; the language dialog at the start lets you choose.
@@ -120,15 +120,15 @@ A working normal installation does not need manual compiler-profile changes. Avo
 
 ## 5. Manual updates
 
-**The Flatpak bundle of this release carries the project's signed update source** (https://glaubenskrieger.github.io/TSW-Forever/repo, signed with the project's GPG key; Flatpak checks every update against that key). Once it is installed, the launcher offers new versions itself (**Update launcher**), and `flatpak update` and your software center use the same source. If you installed an earlier single-file bundle (0.3.0 or older), install this bundle once; the one-time move is described in `documentation/user-guide.md` (“Moving an earlier installation”). (On Windows see section 2a.)
+**The launcher does not update itself, and there is no update source to set up.** Since 0.4.1 Linux and Windows behave the same: when a newer stable version exists, the launcher shows a notice with a button that opens the download area of the official web site (https://glaubenskrieger.github.io/TSW-Forever/) for your system. Download the new file there, check it as above and install it. Nothing is downloaded or installed by the launcher, and no administrator password is needed for the notice. (On Windows see section 2a.)
 
-You can also add the update source without the bundle: `flatpak install --user https://glaubenskrieger.github.io/TSW-Forever/org.tswlauncher.Launcher.flatpakref` (the same project key is used).
-
-To install a bundle by hand (for example without an internet connection to the update source), close the game and launcher, download the bundle and its matching `SHA256SUMS` from the approved release page, check them as above, then install the file. This command can also reinstall the current version:
+On Linux, install the newer bundle the same way as the first one, over the old one. Close the game and the launcher first. Your settings and your game folder are kept, because the application ID `org.tswlauncher.Launcher` and the user installation stay the same:
 
 ```sh
-flatpak install --user --reinstall ./tsw-forever-0.4.0.flatpak
+flatpak install --user ./tsw-forever-0.4.1.flatpak
 ```
+
+Install only a NEWER bundle this way. Flatpak accepts an older bundle without a warning and then goes back to that version; installing the same bundle again is refused ("already installed"). Bundles of 0.3.0 or earlier are updated the same way: the bundle keeps the Flatpak branch `local` of the earlier bundles, so the installed version is updated in place and no second branch appears. An installation that still has a remote from a pre-release test build (`flatpak remotes --user`) keeps working; the remote is simply never asked, because nothing is published there any more, and you can remove it with `flatpak remote-delete --user <name>` if you like.
 
 For a future version, replace the filename with the one you actually downloaded. Confirm the prompt, then start the launcher normally. You do not need to uninstall the old app first or use `--delete-data`. This updates the same user-installed app and Flatpak branch; it does not import a system-wide installation, a different branch or another launcher’s Wine prefix. If you used another installation layout, preserve it and report the mismatch rather than deleting or moving game data.
 

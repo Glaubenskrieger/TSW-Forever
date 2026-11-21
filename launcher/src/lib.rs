@@ -31,7 +31,6 @@ pub mod releasenotice;
 pub mod runner;
 pub mod runtimedl;
 pub mod secrets;
-pub mod selfupdate;
 pub mod sha256;
 pub mod shadercache;
 pub mod update;

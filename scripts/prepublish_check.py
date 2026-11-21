@@ -29,7 +29,6 @@ import check_secrets_in_tree as cst  # noqa: E402  (its SHAPES and skip lists ar
 ROOT = os.path.realpath(os.path.join(HERE, ".."))
 TOP_ALLOWED = {"assets", "rustfmt.toml", ".cargo", "THIRD-PARTY-NOTICES.md", ".github", ".gitignore", "AGENTS.md", "CHANGELOG.md", "README.md", "documentation", "launcher", "launcher-gui", "packaging", "patcher", "scripts", "website"}
 TOP_ALLOWED_PREFIXES = ("LICENSE", "COPYING", "NOTICE")
-PUBLIC_KEY_FILE = "packaging/flatpak/stable-repo.gpg"
 FORBIDDEN_SUFFIX = (".exe", ".dll", ".msi", ".cab", ".sys", ".rdb", ".bxml", ".swf", ".pak", ".dmp", ".so", ".dylib", ".elf", ".o", ".a", ".pdb", ".reg",
                     ".flatpak", ".ostree", ".appimage", ".deb", ".rpm", ".zip", ".7z", ".tar", ".gz", ".xz", ".zst", ".bz2", ".rar", ".iso", ".log", ".pyc", ".pem",
                     ".p12", ".pfx", ".key", ".gpg", ".sqlite", ".db", ".tmp", ".swp")
@@ -176,17 +175,7 @@ def check_file(root, rel, mk):
     for c in parts[:-1]:
         if c in FORBIDDEN_DIRS:
             out.append(f"inside the forbidden folder {c!r}")
-    if rel == PUBLIC_KEY_FILE:
-        # the project's PUBLIC signing key belongs in the repository (users and CI verify the Flatpak repository with it); nothing else with a key suffix does
-        try:
-            data = open(p, "rb").read(65536)
-        except OSError as e:
-            return [f"cannot read: {e.strerror}"]
-        armored = b"BEGIN PGP PUBLIC KEY BLOCK" in data
-        binary = data[:1] and (data[0] & 0xFC == 0x98 or data[0] == 0xC6)  # first packet is a PUBLIC-KEY packet (tag 6, old or new format); `flatpak_keys.sh check-pin` verifies the whole file with gpg
-        if not (armored or binary) or b"PRIVATE KEY" in data or len(data) > 32768:
-            out.append("the public signing key file must hold a PUBLIC key only (flatpak_keys.sh check-pin checks the packets)")
-    elif base.lower().endswith(FORBIDDEN_SUFFIX):
+    if base.lower().endswith(FORBIDDEN_SUFFIX):
         out.append(f"forbidden file type {os.path.splitext(base)[1] or base!r}")
     if FORBIDDEN_NAME.match(base):
         out.append("forbidden file name (game, prefix, cache or local-configuration file)")

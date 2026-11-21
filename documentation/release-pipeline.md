@@ -1,121 +1,96 @@
 # Release pipeline: build on push, release on tag (GitHub Actions)
 
-Status: implemented for version 0.4.0. Describes the owner-run release pipeline of the repository: what happens on a push to `main`, what the owner's release tag publishes, the key model, the GitHub settings and the recovery steps. Every step that changes the repository or its GitHub settings is done by the owner personally; the production signing key never leaves the owner's machine except as the passphrase-protected signing subkey in the protected environment `flatpak-release`.
+Status: implemented for version 0.4.1. Describes the owner-run release pipeline of the repository: what happens on a push to `main`, what the owner's release tag publishes, the two human approvals, the GitHub settings and the recovery steps. Every step that changes the repository or its GitHub settings (commits, pushes, tags, approvals, environments) is done by the owner personally; no agent and no workflow does it.
+
+Since 0.4.1 the distribution is simple: **GitHub Pages carries the static web site only; the installation files are assets of the GitHub release.** There is no hosted Flatpak/OSTree repository, no GPG signing and no secret in any workflow.
 
 ## 1. Build on push, release on tag
 
-**Phase A - the owner pushes to `main`: `build.yml` builds and checks everything and publishes nothing.** It starts for every push to `main` (and by hand on `main` or on an existing tag). Jobs: `flatpak` (`flatpak-stable-build.yml`: the full test suite first, then the unsigned stable OSTree repository and the deterministic source archive), `windows` (`windows.yml`: unsigned installer, tested silently), `candidate` (collects the artifacts of THIS run, writes `candidate.json` with version, full commit id and the SHA-256 of every file, `scripts/release_candidate.py`; the artifacts are kept **30 days**, the step summary shows the candidate) and `site` (the web site goes live on GitHub Pages). No key, no secret, no release, no tag, no Flatpak update: the signing and the stable channel are untouched by a push. `ci.yml` (formatting, Clippy, tests, e2e, policy) runs in parallel as before.
+**Phase A - the owner pushes to `main`: `build.yml` builds and checks everything and publishes nothing.** It starts for every push to `main` (and by hand on `main` or on an existing tag). Jobs:
 
-**The web site and the Flatpak data coexist on one Pages site.** Pages replaces the whole site with every deployment, so `site` first asks the live site for `channels.json`: 404 = no Flatpak release exists yet, the site is the web site alone (`assemble_pages_site.py --website-only`); 200 = the published OSTree repository, install files and `channels.json` are fetched from the live site file by file and verified against the `site-manifest.json` that the release deployment published (`scripts/preserve_live_site.py`), the repository is verified again with the committed public key, and deployed unchanged next to the new web site. Anything unexpected (HTTP status, missing manifest, a differing checksum) stops the job and the old site stays. `site` deploys only if its commit is still the tip of `main` (an older run never replaces a newer site) and runs in the concurrency group `pages-site`, shared with the release `deploy` job, so the two never interleave. The web site links no unpublished artifact: the download buttons read the latest PUBLISHED GitHub release.
+| Job | What it does |
+| --- | --- |
+| `flatpak` | `flatpak-stable-build.yml`: the full test suite first, then the release Flatpak bundle (`tsw-forever-<version>.flatpak`, branch `local` like every earlier bundle, built with the release build metadata `TSW_RELEASE_BUILD=1`, no update source, no key), installed once and audited (starts, reports the version, branch `local`, both programs carry the release build marker, no remote with an address, no Microsoft/Funcom file, no game data), and the deterministic source archive. Artifacts for 30 days. |
+| `windows` | `windows.yml`: the Windows installer (`tsw-forever-<version>-windows-setup.exe`) and its checksum file. |
+| `candidate` | collects the artifacts of THIS run, writes `candidate.json` (version, full commit id, SHA-256 of every file; `scripts/release_candidate.py`), audits the source archive and checks that `CHANGELOG.md` has an entry for the version. Kept 30 days. |
+| `site` | independent of the three jobs above: tests and deploys the static web site (`website/`) to GitHub Pages. Only for a push to `main`, only the tip of `main`, in the concurrency group `pages-site`. The artifact is the web site only (`scripts/assemble_pages_site.py` refuses an installation or repository file) and a few hundred kilobytes. |
+
+`build.yml` creates no release, no tag and no commit, holds no secret, and uses no approval environment. The web site never waits for a release and a release never waits for the web site: the download buttons ask GitHub for the newest PUBLISHED release when the page opens (`releases/latest` never returns a draft or a pre-release; the page accepts only exact file names of the same version and repository addresses; before the first release the buttons are switched off with an explanatory text; if GitHub cannot be asked, they open the list of releases).
 
 **Phase B - the owner looks at the result:** the run `build` of the commit shows `flatpak`, `windows` and `candidate` green and the candidate in its summary; `ci` is green. Only then is the tag set.
 
-**Phase C - the owner pushes the tag `v<APP_VERSION>` on exactly that commit: `release.yml` publishes the candidate.** It starts only for a tag `v<MAJOR>.<MINOR>.<PATCH>` pushed by the owner. There is no other trigger (no manual start, no `workflow_run`). **Nothing is compiled or tested again:** the job `candidate` finds the successful `build` run of exactly the tagged commit (never another commit, never "latest"), requires its artifacts to be complete and not expired, verifies every file against `candidate.json` and hands them to the next jobs. No run, a failed run, an expired artifact or a differing byte stops the release before anything is signed or published.
+**Phase C - the owner pushes the tag `v<APP_VERSION>` on exactly that commit: `release.yml` publishes the candidate.** It starts only for a tag `v<MAJOR>.<MINOR>.<PATCH>` pushed by the owner (`github.actor`/`triggering_actor` = the repository owner, `push`, `tag`). There is no other trigger (no manual start, no `workflow_run`). **Nothing is compiled or tested again:** the tag publishes exactly the files that `build.yml` built for that commit.
 
-| Job | Runs on / needs | Rights | What it does |
-| --- | --- | --- | --- |
-| `guard` | - | read | The tag is the owner's, on `main`, equals `APP_VERSION`; actions are pinned; `packaging/flatpak/stable-repo.gpg` exists and is the pinned key (`flatpak_keys.sh check-pin`); the live channel state allows this version (no downgrade, no re-publish). |
-| `candidate` | guard | read (`contents`, `actions`), no secret | Finds the successful `build.yml` run of exactly the tagged commit, checks that its artifacts exist and are not expired, downloads them, verifies them against `candidate.json` (`release_candidate.py verify`) and hands the verified unsigned repository, source archive and Windows installer on (7 days). |
-| **`sign`** | guard, candidate | read (`contents`, `actions`); **environment `flatpak-release`: approval 1** | `scripts/flatpak_sign_ci.sh`: imports the signing SUBKEY (secret `TSW_FLATPAK_SIGNING_KEY`, passphrase `TSW_FLATPAK_SIGNING_PASSPHRASE`) into a throw-away keyring, checks the primary fingerprint and the subkey id, signs commits and summary, generates the static deltas afterwards, verifies with the committed public key and proves the update over the signed deltas. Uploads the signed repository (public data only). |
-| `verify-signed` | candidate, sign | read, no key | Re-verifies with the public key only, builds the signed stable bundle (update source + public key inside), `check_bundle_matches_repo.sh`, installs the bundle and audits it. |
-| `draft` | candidate, verify-signed | `contents: write` | Assembles the four release files (signed bundle, source archive, Windows installer, `SHA256SUMS`), `check_release_set.py --with-windows`, creates or continues the DRAFT, uploads, reads back and compares (`scripts/release_draft.sh upload`). |
-| `pages-build` | sign, draft | read | Web site + signed repository + install files in one folder (`assemble_pages_site.py`), channel record. |
-| `deploy` | pages-build | `pages`, `id-token`; environment `github-pages`; concurrency group `pages-site` | GitHub Pages: the web site and the Flatpak update source go live together. |
-| `verify-live` | deploy, sign | read | `check_flatpak_live.sh`: every file is reachable and the LIVE repository verifies like a user's Flatpak (only the public key trusted, summary and commit signatures required, the expected commit), retried while Pages becomes reachable. |
-| **`publish`** | draft, verify-live | `contents: write`; **environment `release-publish`: approval 2** | `scripts/release_draft.sh publish`: the draft is still a draft, holds exactly the four files and is byte-identical to the verified ones; it is published and read back (public, not a pre-release). |
+| Job | Needs / rights | What it does |
+| --- | --- | --- |
+| `guard` | read | tag is `vX.Y.Z`, the commit is on `main`, the tag equals `APP_VERSION`, actions are pinned, and the version is NEWER than the newest published release (no downgrade, no re-publish; drafts do not count). |
+| `candidate` | guard; read (`contents`, `actions`) | finds the successful `build` run of EXACTLY the tagged commit, requires every artifact to exist and not be expired, downloads them from that run and verifies every file against `candidate.json` (version, commit, SHA-256; no missing, extra or linked file). A newer commit's or another run's artifacts are never used. |
+| **`approve`** | guard, candidate; read; **environment `flatpak-release`: approval 1** | the approval of the WHOLE release, Linux and Windows together. GitHub holds the job until a required reviewer approves (and sends the notification). The job runs no action, no project script and uses no secret; it only prints that the release was approved. |
+| `draft` | candidate, approve; `contents: write` | assembles the four release files (`tsw-forever-<V>.flatpak`, `tsw-forever-<V>-src.tar.gz`, `tsw-forever-<V>-windows-setup.exe`, `SHA256SUMS`), checks the checksums and the set (`check_release_set.py --with-windows`), audits the source archive, extracts the release notes from `CHANGELOG.md` and fills a DRAFT release; the draft is read back and compared byte for byte (`scripts/release_draft.sh upload`). |
+| **`publish`** | draft; `contents: write`; **environment `release-publish`: approval 2** | verifies the draft once more (still a draft, exactly four files, byte-identical), publishes it and reads the result back (`scripts/release_draft.sh publish`). |
 
-Approval 1 comes after the unprivileged builds and immediately before the key is released. Approval 2 comes after the successful Pages deployment and the live check, immediately before the release page is published. **Consequence the owner accepted:** the Flatpak update source is public from the `deploy` job on, before the GitHub release exists; approval 2 gates the release page and the Windows installer, not the Flatpak update.
+Nothing is public before approval 2 (a draft is not visible to users and `releases/latest` ignores it). A failed check stops the chain before anything is published: a failed test, a missing or expired build, a changed file, a refused approval.
 
-The release has exactly four files (no repository archive: the repository travels between jobs as a workflow artifact and goes live through Pages; later releases mirror the history from the live site).
+## 2. The two approvals (the gates)
 
-## 2. Key model (the production keys exist; nothing in this repository creates a key)
+Both are GitHub environments with **required reviewers**, enforced by GitHub, not by the workflow file. They are the owner's settings; this repository, its workflows and its agents never change them (`scripts/check_flatpak_package.py ci-policy` only checks that the workflow still uses them in the right places and that `build.yml` does not).
 
-The owner created and backed up the production keys. They are the only keys this pipeline accepts:
+* **`flatpak-release`** (approval 1, the historical name is kept): job `approve`, before anything is put into a draft. It now covers the whole release, Linux and Windows together. Settings that are still useful: required reviewer = the owner, deployment branches/tags limited to `v*`. Any secret or variable that this environment still holds from the 0.4.0 plan (`TSW_FLATPAK_SIGNING_*`) is UNUSED: no workflow references a secret any more (policy-checked); the owner may delete them, and the keys, at any time.
+* **`release-publish`** (approval 2): job `publish`, before the draft is published. Required reviewer = the owner, tags `v*`.
 
-| What | Value |
-| --- | --- |
-| Primary key | fingerprint **`FAF3884F3E41D5C63FE656DC86075D3D53A6484B`** (key id `86075D3D53A6484B`), RSA 4096, certify only, no expiry. **Stays with the owner; never in GitHub.** |
-| Signing subkey | key id **`43F56AAA62FBF7DA`**, RSA 4096, sign only, no expiry, protected by a passphrase. Only this subkey goes to GitHub. |
-| Public key file | `packaging/flatpak/stable-repo.gpg`: public parts only (primary + this subkey), provided by the owner. |
-| Pinned in the repository | `packaging/project.conf`: `FLATPAK_SIGNING_FINGERPRINT` and `FLATPAK_SIGNING_SUBKEY_ID` hold the two values above. |
-| GitHub environment | **`flatpak-release`** (required reviewer: the owner = approval 1) |
-| Environment secrets | **`TSW_FLATPAK_SIGNING_KEY`** (the signing subkey, base64 on one line, primary secret key only a stub), **`TSW_FLATPAK_SIGNING_PASSPHRASE`** |
-| Environment variables | **`TSW_FLATPAK_SIGNING_FINGERPRINT`** (the full primary fingerprint), **`TSW_FLATPAK_SIGNING_SUBKEY_ID`** (the subkey id) |
-| Approval 2 | environment **`release-publish`** (required reviewer: the owner), no secret, only the job `publish` |
+The e-mail/notification of GitHub for a waiting deployment is unchanged. A refused or timed-out approval stops the release; the draft (if it exists) stays a draft.
 
-Checks (all fail closed):
+## 3. GitHub settings (owner only)
 
-- `guard` (before anything is built, no secret): `scripts/flatpak_keys.sh check-pin packaging/flatpak/stable-repo.gpg packaging/project.conf` - the file holds public parts only, exactly one key, whose primary fingerprint and signing subkey id are the pinned ones.
-- `sign` (`scripts/flatpak_sign_ci.sh`): the variables must be well-formed (40 and 16 hex digits) and equal the values pinned in `packaging/project.conf`; the imported secret must be a signing subkey ONLY (primary secret key a stub `sec#`, exactly one secret subkey, capability sign only, key id = `TSW_FLATPAK_SIGNING_SUBKEY_ID`, primary fingerprint = `TSW_FLATPAK_SIGNING_FINGERPRINT`); the committed public key must contain exactly this primary key and this subkey; the passphrase must unlock the subkey (a test signature) before the repository is touched; tracing (`set -x`) is refused. Then it signs with exactly that subkey (`<id>!`), generates the static deltas afterwards, verifies with the committed public key, proves the update over the signed deltas and scans for key material.
-- The keyring is a throw-away mode-700 folder in `RUNNER_TEMP`, outside the repository, with its own gpg-agent; both are removed on every exit path. The secret key is read from the environment and passed through a pipe from a shell builtin; the passphrase is handed to that agent through a pipe (`gpg-preset-passphrase`) so that Flatpak's own gpg call needs no prompt, and is unset right after. Neither is ever in an argument, a file, the output or an artifact (tests check output, repository and temporary folder).
-- The job `sign` uses only distribution packages (`flatpak ostree gnupg gpg-agent python3`) and the GitHub actions `checkout` and `upload-artifact` (pinned). It compiles nothing and downloads nothing from third parties. The policy check (`scripts/check_flatpak_package.py ci-policy`, `check_tag_release_workflow`) and its mutation tests enforce: the two secrets and two variables appear in exactly one step of that job, behind `flatpak-release`, with nothing around them.
-- No expiry: a Flatpak client stores the public key once and never refreshes it, so an extended expiry would not reach installed clients. Protection comes from revocation with the offline primary key and from rotation (`documentation/packaging.md`).
-- Throw-away keys exist only in automated tests (`test_flatpak_keys.py`, `test_flatpak_sign_ci.py`, the end-to-end test, `release-dry-run.yml`) and never reach a production secret.
-- The GitHub secrets cannot be read back: the owner's own backups are the only copy.
+Settings that the pipeline needs (set or confirm them yourself; nothing here is done by a workflow or an agent):
 
-## 3. Providing the keys and the GitHub settings (owner only; no private key, backup or passphrase is ever shared)
+* Pages: source "GitHub Actions"; environment `github-pages` allows `main` (the web site deployment of `build.yml`, job `site`). A tag deployment is not used any more.
+* Environments `flatpak-release` and `release-publish`: required reviewer, tags `v*` (see section 2).
+* Actions: default workflow permissions read-only; actions pinned by commit SHA (`scripts/pin_actions.sh --check`).
+* No secret and no variable is needed.
 
-### 3.1 The subkey export (on the machine that holds the keys; run these yourself)
+## 4. The owner's commands for 0.4.1 (fish)
 
-```bash
-# Only the signing SUBKEY (the "!" selects exactly this subkey), no primary secret key; gpg asks for the passphrase.
-gpg --armor --export-secret-subkeys '43F56AAA62FBF7DA!' | base64 -w0 > "$HOME/tsw-ci-subkey.b64"
-# Check the file BEFORE it leaves your machine (prints ids and a verdict, never a secret):
-scripts/flatpak_keys.sh inspect-ci-export "$HOME/tsw-ci-subkey.b64"
-#   expected: secret subkey id: 43F56AAA62FBF7DA / primary fingerprint: FAF3884F3E41D5C63FE656DC86075D3D53A6484B / primary secret key: stub only (good)
-# The public key file (public parts only; the tool refuses to export a secret):
-scripts/flatpak_keys.sh export-public "$GNUPGHOME" FAF3884F3E41D5C63FE656DC86075D3D53A6484B packaging/flatpak/stable-repo.gpg
-scripts/flatpak_keys.sh check-pin packaging/flatpak/stable-repo.gpg packaging/project.conf
+Check the change set first: `git status`, `git diff --stat`, and set the date of the 0.4.1 entry in `CHANGELOG.md` and the release date in `packaging/flatpak/org.tswlauncher.Launcher.metainfo.xml` if they should differ.
+
+```fish
+cd ~/Projekte/tsw-forever
+git status --short
+git add -A
+git commit -m "Release 0.4.1: website-based downloads, no hosted Flatpak repository"
+git push origin main
+gh run list --branch main --limit 5
+gh run watch (gh run list --workflow build.yml --branch main --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run list --workflow ci.yml --commit (git rev-parse HEAD)
+# only when build and ci of exactly this commit are green:
+git tag v0.4.1
+git push origin v0.4.1
+# GitHub now waits twice for you: approve the environment flatpak-release, then release-publish
 ```
 
-`inspect-ci-export` exits 1 if the file holds the primary secret key, a full secret key, more than one secret subkey or a subkey that can do more than sign: then do not upload it. Put `packaging/flatpak/stable-repo.gpg` into the commit. The file `tsw-ci-subkey.b64` is a secret: set it as the environment secret below and delete it afterwards (`shred -u`). If the subkey itself is not protected by a passphrase, or the passphrase is empty, the secret `TSW_FLATPAK_SIGNING_PASSPHRASE` may be empty; the production subkey has a passphrase.
+After `publish`: open https://github.com/Glaubenskrieger/TSW-Forever/releases and https://glaubenskrieger.github.io/TSW-Forever/ and check that the buttons of the web site download the files of the new release. The unpublished draft of 0.4.0 stays untouched until you decide what to do with it (delete it, or leave it; it does not matter for the web site or the launcher because drafts are never offered).
 
-### 3.2 Settings in the public repository (browser or your own `gh` session; owner only)
+## 5. Testing
 
-1. Repository public; **Pages: Source "GitHub Actions"**.
-2. **Environments:**
-   - `flatpak-release`: required reviewer = you; "Prevent self-review" OFF (a single maintainer could not approve otherwise); deployment branches and tags: tag pattern `v*.*.*` only; secrets `TSW_FLATPAK_SIGNING_KEY` and `TSW_FLATPAK_SIGNING_PASSPHRASE`; variables `TSW_FLATPAK_SIGNING_FINGERPRINT` = `FAF3884F3E41D5C63FE656DC86075D3D53A6484B` and `TSW_FLATPAK_SIGNING_SUBKEY_ID` = `43F56AAA62FBF7DA`.
-   - `release-publish`: required reviewer = you; tag pattern `v*.*.*`; no secret.
-   - `github-pages`: deployment from branch `main` (web site on every push) AND tags `v*` (the release deployment) - both are set.
-   With the `gh` of your own session (nothing secret on a command line): `gh secret set TSW_FLATPAK_SIGNING_KEY --env flatpak-release --repo Glaubenskrieger/TSW-Forever < "$HOME/tsw-ci-subkey.b64"`; `gh secret set TSW_FLATPAK_SIGNING_PASSPHRASE --env flatpak-release --repo Glaubenskrieger/TSW-Forever` (asks for the value, hidden); `gh variable set TSW_FLATPAK_SIGNING_FINGERPRINT --env flatpak-release --repo Glaubenskrieger/TSW-Forever --body FAF3884F3E41D5C63FE656DC86075D3D53A6484B`; `gh variable set TSW_FLATPAK_SIGNING_SUBKEY_ID --env flatpak-release --repo Glaubenskrieger/TSW-Forever --body 43F56AAA62FBF7DA`.
-3. **Rulesets:** tag `v*` (only you may create; no update, no delete); `main` (no force push).
-4. **Actions:** allow only GitHub-owned actions and pinned SHAs; default token permission read.
-5. Secret scanning with push protection on.
+Local (all run by `scripts/build_flatpak.sh test` and `ci.yml`): `test_release_candidate.py` (manifest of the candidate), `test_release_draft.py` (draft, publish and their refusals with a stub `gh`), `test_assemble_pages_site.py` and `test_website.py` plus `test_website_download.js` (the web site, every kind of GitHub answer for the download buttons), `test_check_flatpak_package.py` (the workflow policy with mutation tests: both approvals, no secret, no key, no Pages deployment in `release.yml`, only the web site in the Pages artifact), `launcher-gui/tests/update_paths.rs` (the launcher cannot install an update), and `scripts/e2e_flatpak_bundle.sh` (the bundle install and update path with the real Flatpak).
 
-### 3.3 Files of the repository and the owner's commands
+**Not testable before the first real run:** that the environments really stop for the approval (GitHub's behaviour), the cross-run artifact download and `gh run list --commit` of the job `candidate`, the Pages deployment of `build.yml`, the draft handling of `release_draft.sh` with the real `gh`, and the web site's download buttons against a real release. The first push and the first tag show them; a failure before `publish` leaves nothing public.
 
-`.github/workflows/{build,release,flatpak-stable-build,release-dry-run,flatpak,windows}.yml` (the old `release-flatpak.yml` is removed), `packaging/project.conf` (pin), `packaging/flatpak/stable-repo.gpg` (the owner's public key, already there), the scripts `flatpak_keys.sh`, `flatpak_sign_ci.sh`, `check_flatpak_live.sh`, `check_bundle_matches_repo.sh`, `release_draft.sh`, `release_candidate.py`, `preserve_live_site.py`, `flatpak_channel.py`, `gen_flatpak_refs.sh`, `assemble_pages_site.py`, `flatpak_mirror_live.sh`, `check_flatpak_delta_update.sh`, their tests, `website/`.
+## 6. Recovery
 
-**The owner's commands (fish), in this order:** `git add -A; git commit; git push origin main` (Phase A), wait until `build` and `ci` of the commit are green (`gh run list --commit (git rev-parse HEAD)`), then `git tag v0.4.0; git push origin v0.4.0` (Phase C), approve `flatpak-release` when asked (signing), approve `release-publish` when asked (publication). **Do not push anything to `main` between the tag push and the end of the `publish` job, plus about ten minutes:** a web site deployment that reads a cached copy of the live site (Pages sits behind a cache) could deploy the old state over the new repository. The fetches of `channels.json` and `site-manifest.json` carry a cache-busting query string; whether Pages honours it is not verified (open point).
+| Situation | What to do |
+| --- | --- |
+| `candidate` says there is no successful build run for the commit | Wait for `build`, or start it: `gh workflow run build.yml --ref v0.4.1`. Then re-run the failed jobs of the release run. Nothing was published. |
+| An artifact of the build run expired (30 days) | `gh workflow run build.yml --ref <tag>` (pushes nothing), then re-run the release run. |
+| A check fails (a test, the set, the changelog entry) | Fix it in a new commit on `main`; the old tag has no run to use. Delete the tag yourself if you want to reuse the number (only while nothing was published). |
+| You refuse approval 1 or 2 | The release stops; the draft (if any) stays a draft. Re-run the job to ask again, or delete the draft. |
+| `publish` failed after the release became public | Check the release page. A published release is never touched by the pipeline; correct the notes by hand if needed. |
+| The web site shows "no release yet" or opens the release list | The buttons ask GitHub when the page opens; a published release appears at once for new visitors. A rate limit makes the buttons open the list of releases instead; reload later. |
 
-## 4. Testing
+## 7. Limits and open points
 
-1. **Local, before every push** (`scripts/build_flatpak.sh test`, `scripts/e2e_flatpak_update.sh`): all new scripts are tested with throw-away keys (`test_flatpak_keys.py` incl. the split-key model, `test_flatpak_sign_ci.py`, `test_check_flatpak_live.py` against a local web server with every defect, `test_check_bundle_matches_repo.py`, `test_release_draft.py` with a stub of `gh`, `test_check_flatpak_package.py` with mutation tests for every rule of the job graph). The end-to-end test signs version 2 through `flatpak_sign_ci.sh` with the subkey only.
-2. **`release-dry-run.yml`** (manual, `main`, no secret, no environment, no write): the same scripts on a real runner with a throw-away key made inside the job: unsigned build, signing, verification, bundle, installation audit, site assembly and the live check against a local web server. Nothing is deployed, tagged or published. In the private development repository it needs only the Actions minutes (the environments and Pages are not needed).
-3. **Not testable before the first real run:** that GitHub releases the environment secret only after approval 1 (documented GitHub behaviour, enforced by GitHub), that `github-pages` accepts a deployment from a tag (setup step 3.2), and that `gh` handles a draft by its tag with the job token (the private release rehearsal of 0.3.0 used the same calls). Every failure before the `deploy` job leaves nothing public.
-4. A complete rehearsal with real environments, Pages and a draft is possible in a scratch public repository of the owner with a throw-away key (owner action).
-
-## 5. Recovery
-
-| Situation | State | What to do |
-| --- | --- | --- |
-| `candidate` fails: no successful `build` run for the tagged commit | nothing public | The commit was never pushed to `main`, or its build failed: push it / fix it, wait for a green `build`, then re-run the release workflow. A tag on a commit without a green build is never published. Do not move the tag. |
-| `candidate` fails: artifacts expired (30 days) | nothing public | `gh workflow run build.yml --ref v0.4.0` (rebuilds the same commit from the tag; `site` is skipped on a tag), wait for green, re-run the release workflow. |
-| A job fails before `draft` (signing, verification) | nothing public | Fix, then "Re-run failed jobs"; approval 1 is asked again for `sign`. |
-| `draft` fails halfway | an incomplete DRAFT, nothing public | Re-run the job: it continues the draft (same names replaced), refuses foreign files and a published release. |
-| `deploy` fails | the previous site stays (first release: no site); Pages deploys atomically | Re-run only `deploy` (the site artifact is kept 7 days); check the `github-pages` environment rules. |
-| `verify-live` fails | the site may be live, the release is a draft | Re-run (Pages needs minutes); if the content is wrong: fix forward with a new patch version (the Flatpak keeps the previous commit; users can go back with `--commit`, `documentation/user-guide.md`). |
-| `publish` fails or is rejected | the site is live, the release is a draft | Re-run only `publish`. A re-run of the whole workflow is refused by "strictly newer than live" (`flatpak_channel.py plan`), intended. |
-| The tag was wrong | nothing signed without approval 1 | Reject approval 1; do not move or delete a published tag; a corrected release needs a new version. |
-| Abandoned release | a draft remains | Delete the draft by hand (the tag stays). |
-| Key compromise | - | Revoke with the offline primary key, delete the secret, create a new subkey, rotate as in `documentation/packaging.md`. |
-| Key loss (no backup) | no further update can be signed | Existing installations stop updating until users install a bundle with a new key. Keep two backups. |
-
-## 6. Limits and open points
-
-- A Pages deployment carries the whole site: the carried-over Flatpak data comes from the live site and is verified against `site-manifest.json` (written from the first release on) and the public key. A site that was published without a manifest cannot be carried over: the `site` job stops and the old site stays.
-- Artifacts of a push are kept 30 days. GitHub Free: the Actions storage quota is shared by all artifacts; the three release artifacts are re-uploaded for 7 days by the tag run.
-- The release has no pre-release stage; the Flatpak update source is public from `deploy` on (accepted).
-- `packaging/flatpak/stable-repo.gpg` must be part of the commit (`build` stops without it).
-- `scripts/flatpak_release_offline.sh` stays as a test and emergency tool and is marked "not for publication"; the regular process never uses it.
-- GitHub-side behaviour (environments, Pages from a tag) is documented but untested here; see section 4.
+* The integrity of the downloaded files rests on `SHA256SUMS` and GitHub's release hosting; the Flatpak bundle carries no signature and the Windows installer is not code-signed (`security.md`).
+* Flatpak installs an older bundle without a warning (`scripts/e2e_flatpak_bundle.sh`, B4); the web site always links to the newest release.
+* The web site's buttons depend on the GitHub API (60 anonymous requests per hour and address): beyond that they open the list of releases.
+* `ci.yml` also builds a development Flatpak on `main` (a duplicate compile that never conflicts with the candidate).
+* The Windows 0.3.0 to 0.4.x upgrade test and the real Flatpak build of 0.4.1 on a clean system are to be done by the owner before the tag.
